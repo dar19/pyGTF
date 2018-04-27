@@ -441,7 +441,7 @@ class Transcript(object):
     def __UTR_identify(self):
         utr = []
         if self.__cds and self.__exon and (self.__cds != self.__exon):
-            coding_start. coding_end = self.__cds[0][0], self.__cds[-1][1]
+            coding_start, coding_end = self.__cds[0][0], self.__cds[-1][1]
             pos_s = '5UTR' if self.strand == '+' else '3UTR'
             pos_l = '3UTR' if self.strand == '+' else '5UTR'
             for each in self.__exon:
