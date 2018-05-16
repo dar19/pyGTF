@@ -323,7 +323,7 @@ class Transcript(object):
         fp:         file handle for output sequence file
         '''
         seq = seq_dict[self.chro][self.start:self.end]
-        wanted = Sequence('{}_genomic'.format(self.name), seq)
+        wanted = Sequence('{}_genomic'.format(self.name), seq, 'gene_id:{}'.format(self.gene_id))
         if self.strand == '-':
             wanted = wanted.reverse_complement()
         wanted.write_to_fasta_file(fp)
@@ -342,7 +342,7 @@ class Transcript(object):
         for each in self.__exon:
             start, end = each
             seqtmp += seq_dict[self.chro][start:end]
-        wanted = Sequence(self.name, seqtmp)
+        wanted = Sequence(self.name, seqtmp, 'gene_id:{}'.format(self.gene_id))
         if self.strand == '-':
             wanted = wanted.reverse_complement()
         wanted.write_to_fasta_file(fp)
@@ -361,7 +361,7 @@ class Transcript(object):
         for each in self.__cds:
             start, end = each
             seqtmp += seq_dict[self.chro][start:end]
-        wanted = Sequence(self.name, seqtmp)
+        wanted = Sequence(self.name, seqtmp, 'gene_id:{}'.format(self.gene_id))
         if self.strand == '-':
             wanted = wanted.reverse_complement()
         wanted.write_to_fasta_file(fp)
@@ -382,7 +382,8 @@ class Transcript(object):
             start, end = each
             order = index+1 if self.strand == '+' else exon_num-index
             wanted = Sequence('{}_exon{}'.format(self.name, order),
-                              seq_dict[self.chro][start:end])
+                              seq_dict[self.chro][start:end], 
+                              'gene_id:{}'.format(self.gene_id))
             # seqlist.append(wanted)
             wanted = wanted.reverse_complement() if self.strand == '-' else wanted
             wanted.write_to_fasta_file(fp)
@@ -408,7 +409,8 @@ class Transcript(object):
                 end, _ = self.__exon[index+1]
                 order = index+1 if self.strand == '+' else intron_num-index
                 wanted = Sequence('{}_intron{}'.format(self.name, order),
-                                  seq_dict[self.chro][start:end])
+                                  seq_dict[self.chro][start:end],
+                                 'gene_id:{}'.format(self.gene_id))
                 # seqlist.append(wanted)
                 wanted = wanted.reverse_complement() if self.strand == '-' else wanted
                 wanted.write_to_fasta_file(fp)
@@ -429,7 +431,8 @@ class Transcript(object):
                 # seqlist.append(Sequence('{}_{}_{}'.format(self.name, labels, index),
                 #                seq_dict[self.chro][start:end]))
                 wanted = Sequence('{}_{}_{}'.format(self.name, labels, index),
-                                  seq_dict[self.chro][start:end])
+                                  seq_dict[self.chro][start:end], 
+                                  'gene_id:{}'.format(self.gene_id))
                 wanted = wanted.reverse_complement() if self.strand == '-' else wanted
                 wanted.write_to_fasta_file(fp)
             # if self.strand == '-':
