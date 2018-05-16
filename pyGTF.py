@@ -85,9 +85,9 @@ class SequenceWithQual(Sequence):
     def __init__(self, name, seq, qual):
         if len(seq) != len(qual):
             raise Exception('length is Inconsistent seq and qual string')
-        # self.name = name
-        # self.seq = seq
-        super().__init__(name, seq)
+        self.name = name
+        self.seq = seq
+        # super().__init__(name, seq)
         # Sequence.__init__(self, name, seq)
         self.qual = qual
 
