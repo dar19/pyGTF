@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
+import sys
 import bz2
 import gzip
 from collections import defaultdict
