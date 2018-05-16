@@ -401,7 +401,8 @@ class Transcript(object):
         # seqlist = []
         intron_num = len(self.__exon)-1
         if intron_num >= 1:
-            for index, each in enumerate(self.__exon):
+            for index in range(intron_num):
+            #for index, each in enumerate(self.__exon):
                 _, start = self.__exon[index]
                 end, _ = self.__exon[index+1]
                 order = index+1 if self.strand == '+' else intron_num-index
