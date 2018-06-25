@@ -185,6 +185,8 @@ class Transcript(object):
         self.gene_id = self.__class__.__del_suffix(Gid, suffix) if suffix else Gid
         self.__type = infor.get('transcript_type', None)    # 'protein_coding'
         self.__Gtype = infor.get('gene_type', None)
+        self.__Tname = infor.get('transcript_name', None)
+        self.__Gname = infor.get('gene_name', None)
         self.__valid_data()
 
     @classmethod
@@ -234,8 +236,10 @@ class Transcript(object):
         '''
         type_t = 'transcript_type "{}"; '.format(self.__type) if self.__type else ''
         type_g = 'gene_type "{}"; '.format(self.__Gtype) if self.__Gtype else ''
+        name_t = 'transcript_name "{}"; '.format(self.__Tname) if self.__Tname else ''
+        name_g = 'gene_name "{}"; '.format(self.__Gname) if self.__Gname else ''
         identifier = 'transcript_id "{}"; gene_id "{}"; '.format(self.name, self.gene_id)
-        attr = ''.join([identifier, type_t, type_g])
+        attr = ''.join([identifier, type_t, type_g, name_t, name_g])
 
         transcript = [self.chro, '.', 'transcript', self.start+1, self.end,
                       '.', self.strand, '.', attr]
@@ -382,7 +386,7 @@ class Transcript(object):
             start, end = each
             order = index+1 if self.strand == '+' else exon_num-index
             wanted = Sequence('{}_exon{}'.format(self.name, order),
-                              seq_dict[self.chro][start:end], 
+                              seq_dict[self.chro][start:end],
                               'gene_id:{}'.format(self.gene_id))
             # seqlist.append(wanted)
             wanted = wanted.reverse_complement() if self.strand == '-' else wanted
@@ -431,7 +435,7 @@ class Transcript(object):
                 # seqlist.append(Sequence('{}_{}_{}'.format(self.name, labels, index),
                 #                seq_dict[self.chro][start:end]))
                 wanted = Sequence('{}_{}_{}'.format(self.name, labels, index),
-                                  seq_dict[self.chro][start:end], 
+                                  seq_dict[self.chro][start:end],
                                   'gene_id:{}'.format(self.gene_id))
                 wanted = wanted.reverse_complement() if self.strand == '-' else wanted
                 wanted.write_to_fasta_file(fp)
@@ -479,7 +483,7 @@ class GTF_Reader(Files):
         Files.__init__(self, gtf)
 
     def __iter__(self):
-        keep = set(['CDS', 'exon', 'transcript', 'mRNA'])
+        keep = {'CDS', 'exon', 'transcript', 'mRNA'}
         skip = set(['Selenocysteine', 'start_codon', 'stop_codon', 'UTR',
                     'gene', 'five_prime_UTR', 'three_prime_UTR'])
         t_id, t_exon, t_cds, t_info = None, [], [], {}
@@ -514,6 +518,8 @@ class GTF_Reader(Files):
                 try:
                     t_info['transcript_type'] = attr['transcript_type']
                     t_info['gene_type'] = attr['gene_type']
+                    t_info['transcript_name'] = attr['transcript_name']
+                    t_info['gene_name'] = attr['gene_name']
                 except:
                     pass
             elif feature == 'exon':
@@ -523,60 +529,62 @@ class GTF_Reader(Files):
         yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
 
 
-class GTF_Reader_Saft(Files):
-    '''
-    safe read GFF file
-    '''
-    def __init__(self, gtf, suffix=''):
-        self.suffix = suffix
-        Files.__init__(self, gtf)
-
-        keep = set(['CDS', 'exon', 'transcript', 'mRNA'])
-        isoform = defaultdict(dict)
-        for line in Files.__iter__(self):
-            if line.startswith('#'):
-                continue
-            chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
-            if feature not in keep:
-                continue
-            start, end = int(start)-1, int(end)
-            if '=' in attr:
-                attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
-            else:
-                attr = [i.strip().partition(' ') for i in attr.split(';') if i.strip()]
-            attr = {i[0]:i[2].strip('"\t\n\r\'') for i in attr}
-            try:
-                t_id = attr['transcript_id']
-            except KeyError:
-                t_id = attr['ID'] if feature in ['transcript', 'mRNA'] else attr['Parent']
-
-            if feature == 'transcript' or feature == 'mRNA':
-                isoform[t_id]['pos'] = [chro, start, end, strand]
-                try:
-                    isoform[t_id]['gene_id'] = attr['gene_id']
-                except KeyError:
-                    isoform[t_id]['gene_id'] = attr['Parent']
-                try:
-                    isoform[t_id]['transcript_type'] = attr['transcript_type']
-                    isoform[t_id]['gene_type'] = attr['gene_type']
-                except:
-                    pass
-            elif feature == 'exon':
-                isoform[t_id]['exon'] = isoform[t_id].get(t_id, []) + [[start, end], ]
-            elif feature == 'CDS':
-                isoform[t_id]['cds'] = isoform[t_id].get(t_id, []) + [[start, end], ]
-        self.annot = isoform
-
-    def __iter__(self):
-        for t_id in self.annot:
-            chro, start, end, strand = self.annot[t_id]['pos']
-            exon = self.annot[t_id].get('exon', None)
-            cds = self.annot[t_id].get('cds', None)
-            t_type = self.annot[t_id].get('transcript_type', None)
-            g_id = self.annot[t_id].get('gene_id', None)
-            g_type = self.annot[t_id].get('gene_type', None)
-            t_info = {'transcript_type': t_type, 'gene_id': g_id, 'gene_type': g_type}
-            yield Transcript(t_id, chro, start, end, strand, exon, cds, t_info, self.suffix)
+# class GTF_Reader_Saft(Files):
+#     '''
+#     safe read GFF file
+#     '''
+#     def __init__(self, gtf, suffix=''):
+#         self.suffix = suffix
+#         Files.__init__(self, gtf)
+#
+#         keep = {'CDS', 'exon', 'transcript', 'mRNA'}
+#         isoform = defaultdict(dict)
+#         for line in Files.__iter__(self):
+#             if line.startswith('#'):
+#                 continue
+#             chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
+#             if feature not in keep:
+#                 continue
+#             start, end = int(start)-1, int(end)
+#             if '=' in attr:
+#                 attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
+#             else:
+#                 attr = [i.strip().partition(' ') for i in attr.split(';') if i.strip()]
+#             attr = {i[0]:i[2].strip('"\t\n\r\'') for i in attr}
+#             try:
+#                 t_id = attr['transcript_id']
+#             except KeyError:
+#                 t_id = attr['ID'] if feature in ['transcript', 'mRNA'] else attr['Parent']
+#
+#             if feature == 'transcript' or feature == 'mRNA':
+#                 isoform[t_id]['pos'] = [chro, start, end, strand]
+#                 try:
+#                     isoform[t_id]['gene_id'] = attr['gene_id']
+#                 except KeyError:
+#                     isoform[t_id]['gene_id'] = attr['Parent']
+#                 try:
+#                     isoform[t_id]['transcript_type'] = attr['transcript_type']
+#                     isoform[t_id]['gene_type'] = attr['gene_type']
+#                     isoform[t_id]['transcript_name'] = attr['transcript_name']
+#                     isoform[t_id]['gene_name'] = attr['gene_name']
+#                 except:
+#                     pass
+#             elif feature == 'exon':
+#                 isoform[t_id]['exon'] = isoform[t_id].get(t_id, []) + [[start, end], ]
+#             elif feature == 'CDS':
+#                 isoform[t_id]['cds'] = isoform[t_id].get(t_id, []) + [[start, end], ]
+#         self.annot = isoform
+#
+#     def __iter__(self):
+#         for t_id in self.annot:
+#             chro, start, end, strand = self.annot[t_id]['pos']
+#             exon = self.annot[t_id].get('exon', None)
+#             cds = self.annot[t_id].get('cds', None)
+#             t_type = self.annot[t_id].get('transcript_type', None)
+#             g_id = self.annot[t_id].get('gene_id', None)
+#             g_type = self.annot[t_id].get('gene_type', None)
+#             t_info = self.annot[t_id]
+#             yield Transcript(t_id, chro, start, end, strand, exon, cds, t_info, self.suffix)
 
 
 class RefSeq_GFF_Reader(Files):
@@ -586,30 +594,47 @@ class RefSeq_GFF_Reader(Files):
         Files.__init__(self, gtf)
 
     def __iter__(self):
-        SKIP = set(['region', 'miRNA', 'cDNA_match', 'repeat_region', 'D_loop', \
-                'match', 'origin_of_replication', 'centromere', 'sequence_feature'])
-        TRANSCRIPT = set(['mRNA', 'lnc_RNA', 'primary_transcript', 'tRNA', 'rRNA', \
-                'C_gene_segment', 'V_gene_segment', 'SRP_RNA', 'ncRNA', 'transcript'])
-        biotype = set(['lnc_RNA', 'tRNA', 'rRNA', 'SRP_RNA'])
+        SKIP = {'region', 'cDNA_match', 'repeat_region', 'D_loop',
+                'promoter', 'enhancer', 'miRNA',
+                'match', 'origin_of_replication', 'centromere', 'sequence_feature'}
+
+        TRANSCRIPT = {'mRNA',
+                      'lnc_RNA', 'ncRNA', 'antisense_RNA', 'transcript',    # non coding
+                      'RNase_MRP_RNA', 'RNase_P_RNA', 'Y_RNA',
+                      'tRNA', 'rRNA', 'snoRNA', 'snRNA',
+                      'primary_transcript',    # miRNA precursor seq
+                      'C_gene_segment', 'D_gene_segment', 'V_gene_segment', 'J_gene_segment',
+                      'SRP_RNA', 'telomerase_RNA', 'vault_RNA'}
+
+        t_id, t_exon, t_cds, t_info = None, [], [], {}
         for line in Files.__iter__(self):
             if line.startswith( "#" ):
                 continue
             chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
+            for feature in SKIP:
+                continue
+
             start, end = int(start)-1, int(end)
             attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
-            attr = {i[0]:i[2].strip('"\t\n\r\'') for i in attr}
+            attr = {i[0]: i[2].strip('"\t\n\r\'') for i in attr}
             if feature in SKIP:
                 continue
 
             line_id = attr['ID'] if feature in TRANSCRIPT else attr['Parent']
-            if feature in TRANSCRIPT:
+
+            if t_id and t_id != line_id:
+                yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
+                t_exon, t_cds, t_info = [], [], {}
+
+
+            if feature == 'gene':
+                pass
+            elif feature in TRANSCRIPT:
                 pass
             elif feature == 'exon':
                 pass
             elif feature == 'CDS':
                 pass
-            elif feature == 'gene':
-                pass
             else:
-                print('Feature {} is ignore.'.format(feature))
-        return None
+                print('Feature:({}) is ignore, please check line:\n    {}'.format(feature, line))
+        yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
