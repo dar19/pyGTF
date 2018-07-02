@@ -744,7 +744,7 @@ class GTF_Reader(Files):
 
         transcriptlst, annot = [], {}
         for index, line in enumerate(Files.__iter__(self)):
-            if index % 100000 == 0:
+            if index % 100000 == 0 and index != 0:
                 logger.info('working on line NO. of gtf file: {}'.format(index))
 
             if line.startswith('#'):
@@ -785,12 +785,13 @@ class GTF_Reader(Files):
             elif feature == 'CDS':
                 annot.setdefault(t_id, {}).setdefault('cds', []).append([start, end])
 
-        logger.info('Done of parse gff.')
+        logger.info('Done of parse gff, sort transcript list...')
         transcriptlst = sorted(
             set(transcriptlst),
             key=lambda x: transcriptlst.index(x),
             reverse=False
         )
+        logger.info('Done of sort transcript list.')
         for iso in transcriptlst:
             chro, start, end, strand = annot[iso]['pos']
             exon = annot[iso].get('exon', None)
@@ -886,7 +887,7 @@ class RefSeq_GFF_Reader(Files):
         geneidlst, gene_annot = [], {}
         transcript_annot, transcript_structure = {}, {}
         for index, line in enumerate(Files.__iter__(self)):
-            if index % 100000 == 0:
+            if index % 100000 == 0 and index != 0:
                 logger.info('working on line NO. of gff file: {}'.format(index))
 
             if line.startswith('#'):
@@ -948,18 +949,19 @@ class RefSeq_GFF_Reader(Files):
             else:
                 logger.warning('Discover A novel annotation feature: {}'.format(feature))
 
-        logger.info('Done of Read gff, convert raw annot infor to appropriate transcript structure annotation...')
+        logger.info('Done of Read gff, sort transcript list...')
         geneidlst = sorted(set(geneidlst), key=lambda x: geneidlst.index(x), reverse=False)
+        logger.info('Done of sort transcript list, convert raw annot infor to appropriate transcript structure annotation...')
         annot = {}
         for index, gene in enumerate(geneidlst):
-            if index % 5000 == 0:
+            if index % 5000 == 0 and index != 0:
                 logger.info('Already processed gene NO. : {}'.format(index))
 
             infor_gene = gene_annot.get(gene, None)
             infor_transcript = transcript_annot.get(gene, None)
             flag_gene = True
             if infor_gene is None:
-                logger.info('Missing gene feature line for gene: {}'.format(gene))
+                # logger.info('Missing gene feature line for gene: {}'.format(gene))
                 flag_gene = False
 
             if infor_transcript is None:
