@@ -28,7 +28,7 @@ Files parse of Fastx, GTF, NCBI GFF, contain following utility function
 auther = 'chengchaoze@163.com'
 update_data = '2018-06-29'
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='%(levelname)-5s @ %(asctime)s: %(message)s',
                     stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ class Transcript(object):
         self.__valid_data()
 
     @property
-    def name(self):
+    def id(self):
         return self._name
 
     @property
@@ -276,7 +276,10 @@ class Transcript(object):
 
     @property
     def start(self):
-        return self._start
+        '''
+            1-based
+        '''
+        return self._start + 1
 
     @property
     def end(self):
@@ -289,14 +292,18 @@ class Transcript(object):
     @property
     def basic_info(self):
         '''
-        return list object, 1-based postion
-            [name, chro, start, end, strand]
+            return list object, 1-based postion
+                [name, chro, start, end, strand]
         '''
         return [self._name, self._chro, self._start + 1, self._end, self._strand]
 
     @property
     def type(self):
         return self._type
+
+    @property
+    def name(self):
+        return self._transcript_name
 
     @property
     def exon(self):
@@ -309,6 +316,14 @@ class Transcript(object):
     @property
     def gene_id(self):
         return self._gene_id
+
+    @property
+    def gene_type(self):
+        return self._gene_type
+
+    @property
+    def gene_name(self):
+        return self._gene_name
 
     def __del_suffix(self, string, suffix):
         if suffix:
@@ -330,7 +345,9 @@ class Transcript(object):
         supply_info = {i: hash[i] for i in keys}
         tmp = None
         if keys:
-            tmp = ' '.join(['{} "{}";'.format(i[0], i[1]) for i in supply_info.items()])
+            tmp = ' '.join(
+                ['{} "{}";'.format(i[0], i[1]) for i in supply_info.items() if i[1]]
+            )
         return tmp
 
     def __valid_data(self):
@@ -486,13 +503,16 @@ class Transcript(object):
             transcript.insert(0, self._gene_id)
         fp.write(self.__class__.__list2str(transcript))
 
+    @property
     def length_transcript(self):
         EXON = self._exon if self._exon else self._cds
         return sum([i[1] - i[0] for i in EXON])
 
+    @property
     def length(self):
         return self._end - self._start
 
+    @property
     def exon_num(self):
         EXON = self._exon if self._exon else self._cds
         return len(EXON)
@@ -884,6 +904,7 @@ class RefSeq_GFF_Reader(Files):
 
         logger.info('Start Read gff file to python object...')
         pattern_ENTREZID = re.compile(r'GeneID:(\d+)')
+        pattern_HGNC = re.compile(r'HGNC:(\d+)')
         geneidlst, gene_annot = [], {}
         transcript_annot, transcript_structure = {}, {}
         for index, line in enumerate(Files.__iter__(self)):
@@ -900,7 +921,14 @@ class RefSeq_GFF_Reader(Files):
             attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
             attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
 
-            ENTREZID = pattern_ENTREZID.search(attr['Dbxref']).group(1)
+            try:
+                ENTREZID = pattern_ENTREZID.search(attr['Dbxref']).group(1)
+            except:
+                ENTREZID = None
+            try:
+                HGNCID = pattern_HGNC.search(attr['Dbxref']).group(1)
+            except:
+                HGNCID = None
             if feature == 'gene' or feature == 'pseudogene':
                 line_id = attr['ID']
                 geneidlst.append(line_id)
@@ -917,6 +945,7 @@ class RefSeq_GFF_Reader(Files):
                 gene_annot[line_id]['gene_name'] = attr['Name']
                 gene_annot[line_id]['gene_type'] = attr['gene_biotype']
                 gene_annot[line_id]['EntrezID'] = ENTREZID
+                gene_annot[line_id]['HGNC'] = HGNCID
 
             elif feature in TRANSCRIPT:
                 g_id = attr['Parent']
@@ -940,6 +969,7 @@ class RefSeq_GFF_Reader(Files):
                 transcript_annot[g_id][t_id]['transcript_name'] = transcript_name
                 transcript_annot[g_id][t_id]['transcript_type'] = transcript_type
                 transcript_annot[g_id][t_id]['EntrezID'] = ENTREZID
+                transcript_annot[g_id][t_id]['HGNC'] = HGNCID
             elif feature == 'exon':
                 t_id = attr['Parent']
                 transcript_structure.setdefault(t_id, {}).setdefault('exon', []).append([start, end])
@@ -947,7 +977,7 @@ class RefSeq_GFF_Reader(Files):
                 t_id = attr['Parent']
                 transcript_structure.setdefault(t_id, {}).setdefault('CDS', []).append([start, end])
             else:
-                logger.warning('Discover A novel annotation feature: {}'.format(feature))
+                logger.warning('Skip A novel annotation feature: {}'.format(feature))
 
         logger.info('Done of Read gff, sort transcript list...')
         geneidlst = sorted(set(geneidlst), key=lambda x: geneidlst.index(x), reverse=False)
@@ -961,11 +991,10 @@ class RefSeq_GFF_Reader(Files):
             infor_transcript = transcript_annot.get(gene, None)
             flag_gene = True
             if infor_gene is None:
-                # logger.info('Missing gene feature line for gene: {}'.format(gene))
                 flag_gene = False
 
             if infor_transcript is None:
-                logger.info('Missing transcript feature line for gene: {}'.format(gene))
+                logger.debug('Missing transcript feature line for gene: {}'.format(gene))
                 chro, start, end, strand = infor_gene['infor']
                 gene_name = infor_gene['gene_name']
                 gene_type = infor_gene['gene_type']
@@ -973,6 +1002,7 @@ class RefSeq_GFF_Reader(Files):
                 annot[gene][gene]['gene_name'] = gene_name
                 annot[gene][gene]['gene_type'] = gene_type
                 annot[gene][gene]['EntrezID'] = infor_gene['EntrezID']
+                annot[gene][gene]['HGNC'] = infor_gene['HGNC']
                 annot[gene][gene]['transcript_name'] = gene_name
                 annot[gene][gene]['transcript_type'] = gene_type
                 # exon, CDS
@@ -985,7 +1015,7 @@ class RefSeq_GFF_Reader(Files):
                 except KeyError:
                     cds = None
                 if not any([exon, cds]):
-                    logger.info('Missing exon, CDS feature line for gene: {}'.format(gene))
+                    logger.debug('Missing exon, CDS feature line for gene: {}'.format(gene))
                     annot[gene][gene]['exon'] = [[start, end], ]
                 else:
                     annot[gene][gene]['exon'] = exon
@@ -996,11 +1026,13 @@ class RefSeq_GFF_Reader(Files):
                     transcript_id = infor_transcript[iso]['transcript_id']
                     if flag_gene:
                         EntrezID = infor_gene['EntrezID']
+                        HGNC = infor_gene['HGNC']
                         gene_name = infor_gene['gene_name']
                         gene_type = infor_gene['gene_type']
                         G_chro, G_start, G_end, G_strand = infor_gene['infor']
                     else:
                         EntrezID = infor_transcript[iso]['EntrezID']
+                        HGNC = infor_transcript[iso]['HGNC']
                         msg = ('Missing gene feature annotation for transcript({}), '
                                'use transcript infor as gene infor').format(gene)
                         logger.warning(msg)
@@ -1024,6 +1056,7 @@ class RefSeq_GFF_Reader(Files):
                     annot[gene][transcript_id]['transcript_name'] = infor_transcript[iso]['transcript_name']
                     annot[gene][transcript_id]['transcript_type'] = transcript_type
                     annot[gene][transcript_id]['EntrezID'] = EntrezID
+                    annot[gene][transcript_id]['HGNC'] = HGNC
                     # CDS, exon
                     try:
                         exon = transcript_structure[iso]['exon']
@@ -1034,6 +1067,7 @@ class RefSeq_GFF_Reader(Files):
                     except KeyError:
                         cds = None
                     if not any([exon, cds]):
+                        logger.info('Missing exon, CDS feature line for transcript: {}'.format(transcript_id))
                         annot[gene][transcript_id]['exon'] = [[start, end], ]
                     else:
                         annot[gene][transcript_id]['exon'] = exon
