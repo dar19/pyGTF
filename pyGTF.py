@@ -708,7 +708,7 @@ class GTF_Reader(Files):
                 line_id = attr['ID'] if feature in self._transcript_feature else attr['Parent']
 
             logger.debug(line)
-            if t_id and (t_id != line_id) and (t_chro != chro):
+            if t_id and ((t_id != line_id) or ((t_id == line_id) and (t_chro != chro))):
                 yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
                 t_exon, t_cds, t_info = [], [], {}
 
