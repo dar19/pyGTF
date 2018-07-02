@@ -686,7 +686,8 @@ class GTF_Reader(Files):
     def __iter__(self):
         logger.info('Skip known annotation feature: ({})'.format(', '.join(self._skip_feature)))
 
-        t_id, t_exon, t_cds, t_info = None, [], [], {}
+        t_id, t_chro, t_gene = None, None, None
+        t_exon, t_cds, t_info = [], [], {}
         for line in Files.__iter__(self):
             if line.startswith('#'):
                 continue
@@ -707,7 +708,7 @@ class GTF_Reader(Files):
                 line_id = attr['ID'] if feature in self._transcript_feature else attr['Parent']
 
             logger.debug(line)
-            if t_id and t_id != line_id:
+            if t_id and (t_id != line_id) and (t_chro != chro):
                 yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
                 t_exon, t_cds, t_info = [], [], {}
 
@@ -718,6 +719,7 @@ class GTF_Reader(Files):
                     t_info['gene_id'] = attr['gene_id']
                 except KeyError:
                     t_info['gene_id'] = attr['Parent']
+                # t_gene = t_info['gene_id']
                 try:
                     t_info['transcript_type'] = attr['transcript_type']
                     t_info['gene_type'] = attr['gene_type']
