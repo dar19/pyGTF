@@ -698,6 +698,8 @@ class GTF_Reader(Files):
             'gene',
             'five_prime_UTR',
             'three_prime_UTR',
+            'five_prime_utr',
+            'three_prime_utr',
             '3UTR',
             '5UTR',
         }
