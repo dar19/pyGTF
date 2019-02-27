@@ -676,6 +676,32 @@ class Transcript(object):
         return [self._start, self._end, self._exon, self._cds, self._strand]
 
 
+    def gene_structure_for_itol(self):
+        '''
+        '''
+        start, end, strand = self._start, self._end, self._strand
+        if self._cds:
+            cds = [['CDS', i[0], i[1]] for i in self._cds]
+            utr = self.__UTR_identify()
+            feature = sorted(cds+utr, key=lambda x: x[1], reverse=False)
+        else:
+            feature = sorted([['EXON', i[0], i[1]] for i in self._exon],
+                             key=lambda x: x[1], reverse=False)
+        length = end-start
+        if strand == '+':
+            feature = [[i[0], i[1]-start, i[2]-start] for i in feature]
+        else:
+            feature = feature[::-1]
+            feature = [[i[0], end-i[2], end-i[1]] for i in feature]
+        # SHAPE|START|END|COLOR|LABEL
+        element = [self._name, str(length)]
+        for i in feature:
+            label, start, end = i
+            color = '#ff9800' if label=='CDS' or label=='EXON' else '#0067ff'
+            element.append('|'.join(['RE', str(start), str(end), color, label]))
+        return '\t'.join(element)
+
+
 class GTF_Reader(Files):
     '''
         File parser for GTF/GFF file of gene annotation
