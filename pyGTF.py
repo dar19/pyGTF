@@ -25,8 +25,8 @@ Files parse of Fastx, GTF, NCBI GFF, contain following utility function
         specific parse GFF file from NCBI, ref above
 '''
 
-auther = 'chengchaoze@163.com'
-update_data = '2018-06-29'
+auther = 'chengchaoze@gmail.com'
+update_data = '2019-03'
 
 logging.basicConfig(level=logging.INFO,
                     format='%(levelname)-5s @ %(asctime)s: %(message)s',
@@ -440,8 +440,10 @@ class Transcript(object):
         if self._cds:
             cstart = self._cds[0][0]
             cend = self._cds[-1][1]
+            # coding transcript
         else:
-            cstart, cend = self._start, self._end
+            cstart, cend = self._end, self._end
+            # non coding transcript
         EXON = self._exon if self._exon else self._cds
         exon_num = len(EXON)
         exon_len = ''.join(['{},'.format(x[1] - x[0]) for x in EXON])
@@ -480,8 +482,10 @@ class Transcript(object):
         if self._cds:
             cstart = self._cds[0][0]
             cend = self._cds[-1][1]
+            # coding transcript
         else:
-            cstart, cend = self._start, self._end
+            cstart, cend = self._end, self._end
+            # non coding transcript
         EXON = self._exon if self._exon else self._cds
         exon_num = len(EXON)
         estart = ''.join(['{},'.format(i[0]) for i in EXON])
@@ -1108,6 +1112,18 @@ class RefSeq_GFF_Reader(Files):
             tab = [i.strip().split()[:2] for i in f if not i.startswith('#')]
         return {i[0]: i[1] for i in tab}
 
+
+class Bed_Reader(Files):
+    '''
+    '''
+    def __init__(self, fastq):
+        self._fastq = fastq
+        Files.__init__(self, fastq)
+
+    def __iter__(self):
+        pass
+
+        
 
 # if __name__ == '__main__':
 #     _, gff, output = sys.argv
