@@ -1106,9 +1106,8 @@ class RefSeq_GFF_Reader(Files):
 class Bed_Reader(Files):
     '''
     '''
-    def __init__(self, fastq):
-        self._fastq = fastq
-        Files.__init__(self, fastq)
+    def __init__(self, bed):
+        Files.__init__(self, bed)
 
     def __iter__(self):
         for line in Files.__init__(self):
