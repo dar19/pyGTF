@@ -54,7 +54,9 @@ class Files(object):
             lines = bz2.BZ2File(self._fos)
         else:
             lines = open(self._fos)
-        for line in lines:
+        for index, line in enumerate(lines):
+            if index % 10000 == 0 and index != 0:
+                logger.info('working on line NO. of file: {}'.format(index))
             try:
                 # if isinstance(line, bytes):
                 line = line.decode('utf-8')
@@ -238,25 +240,26 @@ class Transcript(object):
             choices from {-, +}
         exon:  int list
             [[exonstart1, exonend1], [exonstart2, exonend2], ]
+
         cds:   int list
             [[CDSstart1, CDSend1], [CDSstart2, CDSend2], ]
-
-        [option infor]: dict
+        infor:    dict
             transcript_type:   string
             gene_id:   string
             gene_type:   string
     '''
 
-    def __init__(self, Tid, chro, start, end, strand, exon, cds, infor, suffix=None):
+    def __init__(self, Tid, chro, start, end, strand, exon, cds=None, infor=None, suffix=None):
         self._name = self.__del_suffix(Tid, suffix)
         self._chro = chro
         self._start = start
         self._end = end
         self._strand = strand
-        msg = 'missing "exon" and "CDS" feature of transcript "{}".'.format(Tid)
-        assert any([exon, cds]), msg
-        self._exon = sorted(exon, key=lambda x: x[0], reverse=False) if exon else None
+        # msg = 'missing "exon" and "CDS" feature of transcript "{}".'.format(Tid)
+        # assert any([exon, cds]), msg
+        self._exon = sorted(exon, key=lambda x: x[0], reverse=False)
         self._cds = sorted(cds, key=lambda x: x[0], reverse=False) if cds else None
+        infor = infor if infor else {}
         geneid = infor.get('gene_id', Tid)
         self._gene_id = self.__del_suffix(geneid, suffix)
         self._type = infor.get('transcript_type', None)  # 'protein_coding'
@@ -265,6 +268,34 @@ class Transcript(object):
         self._gene_name = infor.get('gene_name', None)
         self._supply = infor
         self.__valid_data()
+
+    def __del_suffix(self, string, suffix):
+        if suffix:
+            suffix_len = len(suffix)
+            assert len(string) > suffix_len, 'Gene suffix is illegal'
+            if suffix == string[-suffix_len:]:
+                return string[:-suffix_len]
+        return string
+
+    def __valid_data(self):
+        assert self._strand in ['-', '+'], 'unsupported strand Symbol, {-, +}'
+        if self._exon:
+            start, end = self._exon[0][0], self._exon[-1][1]
+            msg = ('{}: Exon region Over range of the transcriptional region.\n'
+                   '    transcript region:  {}:{}-{}\n    Exon region:  {}-{}'
+                  ).format(self._name, self._chro, self._start, self._end, start, end)
+            assert self._start == start < end == self._end, msg
+
+            for each in self._exon:
+                assert each[1] > each[0], 'End loc must more than Start of Exon.'
+        if self._cds:
+            start, end = self._cds[0][0], self._cds[-1][1]
+            msg = ('{}: CDS region Over range of the transcriptional region.\n'
+                   '    transcript region:  {}:{}-{}\n    coding sequence region:  {}-{}'
+                  ).format(self._name, self._chro, self._start, self._end, start, end)
+            assert self._start <= start < end <= self._end, msg
+            for each in self._cds:
+                assert each[1] > each[0], 'End loc must more than Start of CDS.'
 
     @property
     def id(self):
@@ -295,7 +326,7 @@ class Transcript(object):
             return list object, 1-based postion
                 [name, chro, start, end, strand]
         '''
-        return [self._name, self._chro, self._start + 1, self._end, self._strand]
+        return (self._name, self._chro, self._start + 1, self._end, self._strand)
 
     @property
     def type(self):
@@ -325,13 +356,19 @@ class Transcript(object):
     def gene_name(self):
         return self._gene_name
 
-    def __del_suffix(self, string, suffix):
-        if suffix:
-            suffix_len = len(suffix)
-            assert len(string) > suffix_len, 'Gene suffix is illegal'
-            if suffix == string[-suffix_len:]:
-                return string[:-suffix_len]
-        return string
+    @property
+    def length_transcript(self):
+        EXON = self._exon if self._exon else self._cds
+        return sum([i[1] - i[0] for i in EXON])
+
+    @property
+    def length(self):
+        return self._end - self._start
+
+    @property
+    def exon_num(self):
+        EXON = self._exon if self._exon else self._cds
+        return len(EXON)
 
     def __supply_annot_for_gtf(self, hash):
         defaultkey = {
@@ -350,25 +387,23 @@ class Transcript(object):
             )
         return tmp
 
-    def __valid_data(self):
-        assert self._strand in ['-', '+'], 'unsupported strand Symbol, {-, +}'
-        if self._exon:
-            start, end = self._exon[0][0], self._exon[-1][1]
-            msg = ('{}: Exon region Over range of the transcriptional region.\n'
-                   '    transcript region:  {}:{}-{}\n    Exon region:  {}-{}'
-                  ).format(self._name, self._chro, self._start, self._end, start, end)
-            assert self._start == start < end == self._end, msg
-
+    def __UTR_identify(self):
+        utr = []
+        if self._cds and self._exon and (self._cds != self._exon):
+            coding_start, coding_end = self._cds[0][0], self._cds[-1][1]
+            pos_s = '5UTR' if self._strand == '+' else '3UTR'
+            pos_l = '3UTR' if self._strand == '+' else '5UTR'
             for each in self._exon:
-                assert each[1] > each[0], 'End loc must more than Start of Exon.'
-        if self._cds:
-            start, end = self._cds[0][0], self._cds[-1][1]
-            msg = ('{}: CDS region Over range of the transcriptional region.\n'
-                   '    transcript region:  {}:{}-{}\n    coding sequence region:  {}-{}'
-                  ).format(self._name, self._chro, self._start, self._end, start, end)
-            assert self._start <= start < end <= self._end, msg
-            for each in self._cds:
-                assert each[1] > each[0], 'End loc must more than Start of CDS.'
+                start, end = each
+                if start < end < coding_start:
+                    utr.append([pos_s, start, end])
+                elif start < coding_start < end:
+                    utr.append([pos_s, start, coding_start])
+                if start < coding_end < end:
+                    utr.append([pos_l, coding_end, end])
+                elif coding_end < start < end:
+                    utr.append([pos_l, start, end])
+        return utr
 
     @classmethod
     def __list2str(cls, lst):
@@ -401,19 +436,15 @@ class Transcript(object):
             attr,
         ]
         fp.write(self.__class__.__list2str(transcript))
-        order = False if self._strand == '+' else True
 
+        Feature = []
+        order = False if self._strand == '+' else True
         if self._exon:
-            exon_feature = []
             for i, each in enumerate(self._exon):
                 start, end = each
-                exon_feature.append(
+                Feature.append(
                     [self._chro, '.', 'exon', start + 1, end, '.', self._strand, '.', attr]
                 )
-            exon_feature = sorted(exon_feature, key=lambda x: x[3], reverse=order)
-            for each in exon_feature:
-                fp.write(self.__class__.__list2str(each))
-        Feature = []
         if self._cds:
             for i, each in enumerate(self._cds):
                 start, end = each
@@ -426,7 +457,6 @@ class Transcript(object):
             Feature.append(
                 [self._chro, '.', labels, start + 1, end, '.', self._strand, '.', attr]
             )
-        order = False if self._strand == '+' else True
         Feature = sorted(Feature, key=lambda x: x[3], reverse=order)
         for each in Feature:
             fp.write(self.__class__.__list2str(each))
@@ -444,17 +474,16 @@ class Transcript(object):
         else:
             cstart, cend = self._end, self._end
             # non coding transcript
-        EXON = self._exon if self._exon else self._cds
-        exon_num = len(EXON)
-        exon_len = ''.join(['{},'.format(x[1] - x[0]) for x in EXON])
-        exon_start = ''.join(['{},'.format(x[0] - self._start) for x in EXON])
+        exon_num = len(self._exon)
+        exon_len = ''.join(['{},'.format(x[1] - x[0]) for x in self._exon])
+        exon_start = ''.join(['{},'.format(x[0] - self._start) for x in self._exon])
 
         transcript = [
             self._chro,
             self._start,
             self._end,
             self._name,
-            1000,
+            0,
             self._strand,
             cstart,
             cend,
@@ -486,10 +515,9 @@ class Transcript(object):
         else:
             cstart, cend = self._end, self._end
             # non coding transcript
-        EXON = self._exon if self._exon else self._cds
-        exon_num = len(EXON)
-        estart = ''.join(['{},'.format(i[0]) for i in EXON])
-        eend = ''.join(['{},'.format(i[1]) for i in EXON])
+        exon_num = len(self._exon)
+        estart = ''.join(['{},'.format(i[0]) for i in self._exon])
+        eend = ''.join(['{},'.format(i[1]) for i in self._exon])
 
         transcript = [
             self._name,
@@ -506,20 +534,6 @@ class Transcript(object):
         if CIRCexplorer2:
             transcript.insert(0, self._gene_id)
         fp.write(self.__class__.__list2str(transcript))
-
-    @property
-    def length_transcript(self):
-        EXON = self._exon if self._exon else self._cds
-        return sum([i[1] - i[0] for i in EXON])
-
-    @property
-    def length(self):
-        return self._end - self._start
-
-    @property
-    def exon_num(self):
-        EXON = self._exon if self._exon else self._cds
-        return len(EXON)
 
     def extract_genomic_seq(self, seq_dict, fp):
         '''
@@ -650,60 +664,42 @@ class Transcript(object):
             logger.info('{}: -- not annot exon and CDS --'.format(self._name))
             return None
 
-    def __UTR_identify(self):
-        utr = []
-        if self._cds and self._exon and (self._cds != self._exon):
-            coding_start, coding_end = self._cds[0][0], self._cds[-1][1]
-            pos_s = '5UTR' if self._strand == '+' else '3UTR'
-            pos_l = '3UTR' if self._strand == '+' else '5UTR'
-            for each in self._exon:
-                start, end = each
-                if start < end < coding_start:
-                    utr.append([pos_s, start, end])
-                elif start < coding_start < end:
-                    utr.append([pos_s, start, coding_start])
-                if start < coding_end < end:
-                    utr.append([pos_l, coding_end, end])
-                elif coding_end < start < end:
-                    utr.append([pos_l, start, end])
-        return utr
-
-    def structure_dat(self):
-        '''
-            specific function for plot gene structure
-
-            return
-            ------
-            list, 0-based postion
-                [start, end, [[es,ee],], [[cs,ce],], strand]
-        '''
-        return [self._start, self._end, self._exon, self._cds, self._strand]
-
-
-    def gene_structure_for_itol(self):
-        '''
-        '''
-        start, end, strand = self._start, self._end, self._strand
-        if self._cds:
-            cds = [['CDS', i[0], i[1]] for i in self._cds]
-            utr = self.__UTR_identify()
-            feature = sorted(cds+utr, key=lambda x: x[1], reverse=False)
-        else:
-            feature = sorted([['EXON', i[0], i[1]] for i in self._exon],
-                             key=lambda x: x[1], reverse=False)
-        length = end-start
-        if strand == '+':
-            feature = [[i[0], i[1]-start, i[2]-start] for i in feature]
-        else:
-            feature = feature[::-1]
-            feature = [[i[0], end-i[2], end-i[1]] for i in feature]
-        # SHAPE|START|END|COLOR|LABEL
-        element = [self._name, str(length)]
-        for i in feature:
-            label, start, end = i
-            color = '#ff9800' if label=='CDS' or label=='EXON' else '#0067ff'
-            element.append('|'.join(['RE', str(start), str(end), color, label]))
-        return '\t'.join(element)
+    # def structure_dat(self):
+    #     '''
+    #         specific function for plot gene structure
+    #
+    #         return
+    #         ------
+    #         list, 0-based postion
+    #             [start, end, [[es,ee],], [[cs,ce],], strand]
+    #     '''
+    #     return [self._start, self._end, self._exon, self._cds, self._strand]
+    #
+    #
+    # def gene_structure_for_itol(self):
+    #     '''
+    #     '''
+    #     start, end, strand = self._start, self._end, self._strand
+    #     if self._cds:
+    #         cds = [['CDS', i[0], i[1]] for i in self._cds]
+    #         utr = self.__UTR_identify()
+    #         feature = sorted(cds+utr, key=lambda x: x[1], reverse=False)
+    #     else:
+    #         feature = sorted([['EXON', i[0], i[1]] for i in self._exon],
+    #                          key=lambda x: x[1], reverse=False)
+    #     length = end-start
+    #     if strand == '+':
+    #         feature = [[i[0], i[1]-start, i[2]-start] for i in feature]
+    #     else:
+    #         feature = feature[::-1]
+    #         feature = [[i[0], end-i[2], end-i[1]] for i in feature]
+    #     # SHAPE|START|END|COLOR|LABEL
+    #     element = [self._name, str(length)]
+    #     for i in feature:
+    #         label, start, end = i
+    #         color = '#ff9800' if label=='CDS' or label=='EXON' else '#0067ff'
+    #         element.append('|'.join(['RE', str(start), str(end), color, label]))
+    #     return '\t'.join(element)
 
 
 class GTF_Reader(Files):
@@ -795,10 +791,7 @@ class GTF_Reader(Files):
         logger.info('Start Read gff file to python object...')
 
         transcriptlst, annot = [], {}
-        for index, line in enumerate(Files.__iter__(self)):
-            if index % 100000 == 0 and index != 0:
-                logger.info('working on line NO. of gtf file: {}'.format(index))
-
+        for line in Files.__iter__(self):
             if line.startswith('#'):
                 continue
             chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
@@ -939,10 +932,7 @@ class RefSeq_GFF_Reader(Files):
         pattern_HGNC = re.compile(r'HGNC:(\d+)')
         geneidlst, gene_annot = [], {}
         transcript_annot, transcript_structure = {}, {}
-        for index, line in enumerate(Files.__iter__(self)):
-            if index % 100000 == 0 and index != 0:
-                logger.info('working on line NO. of gff file: {}'.format(index))
-
+        for line in Files.__iter__(self):
             if line.startswith('#'):
                 continue
             chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
@@ -1121,9 +1111,22 @@ class Bed_Reader(Files):
         Files.__init__(self, fastq)
 
     def __iter__(self):
-        pass
+        for line in Files.__init__(self):
+            chro, start, end, name, _, strand, cstart, cend, _, _, elen, estart = line.strip().split('\t')
+            start, end, cstart, cend = map(int, [start, end, cstart, cend])
+            elen = [int(i) for i in elen.split(',') if i]
+            estart = [int(i) + start for i in estart.split(',') if i]
+            eend = [estart[i] + elen[i] for i, j in enumerate(elen)]
+            EXON = [[estart[i], eend[i]] for i, j in enumerate(estart)]
+            if cstart == cend:
+                CDS = []
+            else:
+                CDS = [i for i in EXON if i[1] > cstart]
+                CDS = [i for i in CDS if i[0] < cend]
+                CDS[0][0] = cstart
+                CDS[-1][1] = cend
+            yield Transcript(name, chro, start, end, strand, EXON, CDS)
 
-        
 
 # if __name__ == '__main__':
 #     _, gff, output = sys.argv
