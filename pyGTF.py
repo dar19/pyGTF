@@ -55,8 +55,8 @@ class Files(object):
         else:
             lines = open(self._fos)
         for index, line in enumerate(lines):
-            if index % 10000 == 0 and index != 0:
-                logger.info('working on line NO. of file: {}'.format(index))
+            if index % 50000 == 0 and index != 0:
+                logger.info('working on line NO. of file: {:,}'.format(index))
             try:
                 # if isinstance(line, bytes):
                 line = line.decode('utf-8')
@@ -284,7 +284,7 @@ class Transcript(object):
             msg = ('{}: Exon region Over range of the transcriptional region.\n'
                    '    transcript region:  {}:{}-{}\n    Exon region:  {}-{}'
                   ).format(self._name, self._chro, self._start, self._end, start, end)
-            assert self._start == start < end == self._end, msg
+            assert self._start <= start < end <= self._end, msg
 
             for each in self._exon:
                 assert each[1] > each[0], 'End loc must more than Start of Exon.'
@@ -841,6 +841,10 @@ class GTF_Reader(Files):
             chro, start, end, strand = annot[iso]['pos']
             exon = annot[iso].get('exon', None)
             cds = annot[iso].get('cds', None)
+            if not any([exon, cds]):
+                exon = [[start, end]]
+            elif not exon:
+                exon = cds.copy()
             t_info = {
                 'gene_id': annot[iso].get('gene_id', None),
                 'gene_name': annot[iso].get('gene_name', None),
@@ -873,6 +877,10 @@ class RefSeq_GFF_Reader(Files):
                 transcript_type = annot[gene][iso]['transcript_type']
                 exon = annot[gene][iso].get('exon', None)
                 cds = annot[gene][iso].get('CDS', None)
+                if not any([exon, cds]):
+                    exon = [[start, end]]
+                elif not exon:
+                    exon = cds.copy()
                 t_info = {
                     'gene_id': gene,
                     'gene_name': gene_name,
@@ -1110,7 +1118,7 @@ class Bed_Reader(Files):
         Files.__init__(self, bed)
 
     def __iter__(self):
-        for line in Files.__init__(self):
+        for line in Files.__iter__(self):
             chro, start, end, name, _, strand, cstart, cend, _, _, elen, estart = line.strip().split('\t')
             start, end, cstart, cend = map(int, [start, end, cstart, cend])
             elen = [int(i) for i in elen.split(',') if i]
@@ -1120,7 +1128,7 @@ class Bed_Reader(Files):
             if cstart == cend:
                 CDS = []
             else:
-                CDS = [i for i in EXON if i[1] > cstart]
+                CDS = [i.copy() for i in EXON if i[1] > cstart]
                 CDS = [i for i in CDS if i[0] < cend]
                 CDS[0][0] = cstart
                 CDS[-1][1] = cend
