@@ -1,36 +1,19 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-import re
-import sys
 import bz2
+import sys
 import gzip
 import logging
+import argparse
+from io import open
 
-'''
-Files parse of Fastx, GTF, NCBI GFF, contain following utility function
 
-    Fasta_Reader
-        parse fasta
-
-    Fastq_Reader
-        parse single fastq
-
-    GTF_Reader
-        parse universal GTF/GFF file, return Transcript object, could convert
-        annotation infor as GTF, BED, GenePred format, and extract genome,
-        transcript, CDS and UTR sequence with reference genome file
-
-    RefSeq_GFF_Reader
-        specific parse GFF file from NCBI, ref above
-'''
-
-auther = 'chengchaoze@gmail.com'
-update_data = '2019-03'
-
-logging.basicConfig(level=logging.INFO,
-                    format='%(levelname)-5s @ %(asctime)s: %(message)s',
-                    stream=sys.stderr)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)-5s @ %(filename)s:%(lineno)s, %(asctime)s, %(message)s',
+    stream=sys.stderr
+)
 logger = logging.getLogger(__name__)
 # stdlog = logging.StreamHandler(sys.stdout)
 # stdlog.setLevel(logging.INFO)
@@ -49,21 +32,22 @@ class Files(object):
 
     def __iter__(self):
         if self._fos.lower().endswith(('.gz', '.gzip')):
-            lines = gzip.open(self._fos)
+            fp = gzip.open(self._fos)
         elif self._fos.lower().endswith('.bz2'):
-            lines = bz2.BZ2File(self._fos)
+            fp = bz2.BZ2File(self._fos)
         else:
-            lines = open(self._fos)
-        for index, line in enumerate(lines):
+            fp = open(self._fos)
+
+        for index, line in enumerate(fp):
             if index % 50000 == 0 and index != 0:
-                logger.info('working on line NO. of file: {:,}'.format(index))
+                logger.info('working on line NO. of {}: {:,}'.format(self._fos, index))
             try:
                 # if isinstance(line, bytes):
                 line = line.decode('utf-8')
             except:
                 pass
             yield line
-        lines.close()
+        fp.close()
 
 
 class Sequence(object):
@@ -72,13 +56,13 @@ class Sequence(object):
     '''
 
     def __init__(self, name, seq, descr=''):
-        self._name = name
-        self._seq = seq
+        self._id = name
+        self._seq = seq.strip()
         self._descr = descr
 
     @property
     def name(self):
-        return self._name
+        return self._id
 
     @property
     def seq(self):
@@ -91,6 +75,10 @@ class Sequence(object):
     @property
     def length(self):
         return len(self._seq)
+
+    @property
+    def is_empty(self):
+        return False if self._seq else True
 
     def reverse_complement(self):
         paired_rc = {
@@ -106,17 +94,17 @@ class Sequence(object):
             'n': 'n',
         }
         seq = ''.join([paired_rc[i] for i in self._seq[::-1]])
-        return Sequence(self._name, seq, self._descr)
+        return Sequence(self._id, seq, self._descr)
 
     def write_to_fasta_file(self, fp, chara=80):
         if self._descr:
-            fp.write('>{} {}\n'.format(self._name, self._descr))
+            fp.write('>{} {}\n'.format(self._id, self._descr))
         else:
-            fp.write('>{}\n'.format(self._name))
+            fp.write('>{}\n'.format(self._id))
         fp.write('{}'.format(self.__class__._seq_formater(self._seq, chara)))
 
     def write_to_tab_file(self, fp):
-        fp.write('{}\t{}\n'.format(self._name, self._seq))
+        fp.write('{}\t{}\n'.format(self._id, self._seq))
 
     @classmethod
     def _seq_formater(cls, seq, length):
@@ -134,7 +122,7 @@ class SequenceWithQual(Sequence):
     def __init__(self, name, seq, qual):
         if len(seq) != len(qual):
             raise Exception('length is Inconsistent seq and qual string')
-        self._name = name
+        self._id = name
         self._seq = seq
         # super().__init__(name, seq)
         # Sequence.__init__(self, name, seq)
@@ -142,7 +130,7 @@ class SequenceWithQual(Sequence):
 
     @property
     def name(self):
-        return self._name
+        return self._id
 
     @property
     def seq(self):
@@ -161,12 +149,12 @@ class SequenceWithQual(Sequence):
         return len(self._seq)
 
     def write_to_fastq_file(self, fp):
-        fp.write('@{}\n'.format(self._name))
+        fp.write('@{}\n'.format(self._id))
         fp.write('{}\n'.format(self._seq))
         fp.write('+\n{}\n'.format(self._qual))
 
     def write_to_fasta_file(self, fp):
-        fp.write('>{}\n'.format(self._name))
+        fp.write('>{}\n'.format(self._id))
         fp.write('{}\n'.format(self._seq))
 
 
@@ -192,6 +180,12 @@ class Fasta_Reader(Files):
         yield Sequence(seqid, seq, descr)
 
 
+class FastqFileError(Exception):
+    '''
+    '''
+    pass
+
+
 class Fastq_Reader(Files):
     '''
         File parser for fastq file of nucleic acid
@@ -203,18 +197,19 @@ class Fastq_Reader(Files):
 
     def __iter__(self):
         iter = Files.__iter__(self)
-        try:
-            while True:
+        while True:
+            try:
                 seqid = next(iter)
-                try:
-                    seq, _, qual = next(iter), next(iter), next(iter)
-                except StopIteration:
-                    logger.error('incompelete Fastq file: {}\n'.format(self._fastq))
-                    sys.exit(1)
-                seqid, seq, qual = [i.strip('\t \n') for i in [seqid[1:], seq, qual]]
-                yield SequenceWithQual(seqid, seq, qual)
-        except StopIteration:
-            pass
+            except StopIteration:
+                break    # end of file
+            try:
+                seq, _, qual = next(iter), next(iter), next(iter)
+            except StopIteration:
+                raise FastqFileError(
+                    'incompelete Fastq file: {}\n'.format(self._fastq)
+                )
+            seqid, seq, qual = [i.strip('\t \n') for i in [seqid[1:], seq, qual]]
+            yield SequenceWithQual(seqid, seq, qual)
 
     def phred_judge(self):
         iter = Files.__iter__(self)
@@ -238,68 +233,65 @@ class Transcript(object):
             0-based location
         strand:   string
             choices from {-, +}
-        exon:  int list
-            [[exonstart1, exonend1], [exonstart2, exonend2], ]
+        exon:  list
+            [(exonstart1, exonend1), (exonstart2, exonend2), ]
 
-        cds:   int list
-            [[CDSstart1, CDSend1], [CDSstart2, CDSend2], ]
+        cds:   tuple
+            (cds start site, cds end site)
         infor:    dict
-            transcript_type:   string
-            gene_id:   string
-            gene_type:   string
+            transcript_name, transcript_type:   string
+            gene_id, gene_name, gene_type:   string
     '''
 
-    def __init__(self, Tid, chro, start, end, strand, exon, cds=None, infor=None, suffix=None):
-        self._name = self.__del_suffix(Tid, suffix)
+    def __init__(self, Tid, chro, start, end, strand, exon, cds=None, infor=None):
+        self._id = Tid
         self._chro = chro
         self._start = start
         self._end = end
         self._strand = strand
-        # msg = 'missing "exon" and "CDS" feature of transcript "{}".'.format(Tid)
-        # assert any([exon, cds]), msg
-        self._exon = sorted(exon, key=lambda x: x[0], reverse=False)
-        self._cds = sorted(cds, key=lambda x: x[0], reverse=False) if cds else None
-        infor = infor if infor else {}
-        geneid = infor.get('gene_id', Tid)
-        self._gene_id = self.__del_suffix(geneid, suffix)
-        self._type = infor.get('transcript_type', None)  # 'protein_coding'
-        self._gene_type = infor.get('gene_type', None)
-        self._transcript_name = infor.get('transcript_name', self._name)
-        self._gene_name = infor.get('gene_name', None)
-        self._supply = infor
-        self.__valid_data()
+        self._exon = tuple([
+            (x, y) for x, y in sorted(set(exon), key=lambda x: x[0], reverse=False)
+        ])
+        self._codingregion = cds
+        self._attributes = infor if infor else {}
+        self.__structure_data_validation()
+        self._utr5, self._cds, self._utr3 = self.__transcriptional_region_group()
 
-    def __del_suffix(self, string, suffix):
-        if suffix:
-            suffix_len = len(suffix)
-            assert len(string) > suffix_len, 'Gene suffix is illegal'
-            if suffix == string[-suffix_len:]:
-                return string[:-suffix_len]
-        return string
-
-    def __valid_data(self):
+    def __structure_data_validation(self):
         assert self._strand in ['-', '+'], 'unsupported strand Symbol, {-, +}'
-        if self._exon:
-            start, end = self._exon[0][0], self._exon[-1][1]
-            msg = ('{}: Exon region Over range of the transcriptional region.\n'
-                   '    transcript region:  {}:{}-{}\n    Exon region:  {}-{}'
-                  ).format(self._name, self._chro, self._start, self._end, start, end)
+        for each in self._exon:
+            msg = '{}: Exon region Over range of the transcriptional region.'.format(self._id)
+            assert self._start <= each[0] < each[1] <= self._end, msg
+        if self._codingregion:
+            msg = 'Error CDS postion, support format: (start, end)'
+            assert len(self._codingregion) == 2, msg
+            start, end = self._codingregion
+            msg = '{}: CDS region Over range of the transcriptional region.'.format(self._id)
             assert self._start <= start < end <= self._end, msg
 
-            for each in self._exon:
-                assert each[1] > each[0], 'End loc must more than Start of Exon.'
-        if self._cds:
-            start, end = self._cds[0][0], self._cds[-1][1]
-            msg = ('{}: CDS region Over range of the transcriptional region.\n'
-                   '    transcript region:  {}:{}-{}\n    coding sequence region:  {}-{}'
-                  ).format(self._name, self._chro, self._start, self._end, start, end)
-            assert self._start <= start < end <= self._end, msg
-            for each in self._cds:
-                assert each[1] > each[0], 'End loc must more than Start of CDS.'
+    def __transcriptional_region_group(self):
+        if self._codingregion:
+            cstart, cend = self._codingregion
+            if cstart == cend:
+                return (), (), ()
+            utr5 = [(x, y) for x, y in self._exon if x < cstart]
+            if utr5:
+                start, end = utr5.pop(); utr5.append((start, cstart))
+            cds = [(x, y) for x, y in self._exon if y > cstart or x < cend]
+            start, end = cds.pop(); cds.append((start, cend))
+            start, end = cds.pop(0); cds.insert(0, (cstart, end))
+            utr3 = [(x, y) for x, y in self._exon if y > cend]
+            if utr3:
+                start, end = utr3.pop(0); utr3.insert(0, (cend, end))
+            if self._strand == '-':
+                utr5, utr3 = utr3, utr5
+            return map(tuple, [utr5, cds, utr3])
+        else:
+            return (), (), ()
 
     @property
     def id(self):
-        return self._name
+        return self._id
 
     @property
     def chro(self):
@@ -321,168 +313,138 @@ class Transcript(object):
         return self._strand
 
     @property
-    def basic_info(self):
+    def bed(self):
         '''
-            return list object, 1-based postion
-                [name, chro, start, end, strand]
+        basic bed:
+            chro, start, end, name, score, strand
         '''
-        return (self._name, self._chro, self._start + 1, self._end, self._strand)
-
-    @property
-    def type(self):
-        return self._type
-
-    @property
-    def name(self):
-        return self._transcript_name
+        return (self._chro, self._start, self._end, self._id, 0, self._strand)
 
     @property
     def exon(self):
         return self._exon
 
     @property
-    def CDS(self):
-        return self._cds
-
-    @property
-    def gene_id(self):
-        return self._gene_id
-
-    @property
-    def gene_type(self):
-        return self._gene_type
-
-    @property
-    def gene_name(self):
-        return self._gene_name
-
-    @property
-    def length_transcript(self):
-        EXON = self._exon if self._exon else self._cds
-        return sum([i[1] - i[0] for i in EXON])
+    def exon_count(self):
+        return len(self._exon)
 
     @property
     def length(self):
-        return self._end - self._start
+        return sum([(y - x) for x, y in self._exon])
 
     @property
-    def exon_num(self):
-        EXON = self._exon if self._exon else self._cds
-        return len(EXON)
+    def cds(self):
+        return self._cds
 
-    def __supply_annot_for_gtf(self, hash):
-        defaultkey = {
-            'gene_id',
-            'gene_name',
-            'gene_type',
-            'transcript_name',
-            'transcript_type',
+    @property
+    def length_cds(self):
+        return sum([(y - x) for x, y in self._cds])
+
+    @property
+    def name(self):
+        return self._attributes.get('transcript_name', self._id)
+
+    @property
+    def type(self):
+        return self._attributes.get('transcript_type', "")
+
+    @property
+    def gene_id(self):
+        return self._attributes.get('gene_id', self._id)
+
+    @property
+    def gene_name(self):
+        return self._attributes.get('gene_name', "")
+
+    @property
+    def gene_type(self):
+        return self._attributes.get('gene_type', "")
+
+    def del_version(self, sep='.'):
+        '''
+        remove version infor of transcript id, default version infor at '.' after
+        '''
+        tid = self._id
+        if sep in tid:
+            self._id = tid[:tid.rindex(sep)]
+        gid = self._attributes.get('gene_id', None)
+        if sep in gid:
+            self._attributes['gene_id'] = gid[:gid.rindex(sep)]
+
+    def id_modifer(self, func):
+        '''
+        modify transcript_id, gene_id
+
+        parameter
+        ---------
+        func:     function, recommend use lambda
+        '''
+        self._id = func(self._id)
+        self._attributes['gene_id'] = func(self.gene_id)
+
+    def to_gtf(self, fp):
+        '''
+        parameter
+        ---------
+        fp:    file handle for output standrand GTF file
+        '''
+        attr = self.__attri_of_gtfline()
+
+        RecordTranscript = (
+            self._chro, '.', 'transcript', self._start + 1, self._end, '.', self._strand, '.', attr,
+        )
+        tmp = zip(
+            ('exon', 'CDS', '5UTR', '3UTR'),
+            (self._exon, self._cds, self._utr5, self._utr3)
+        )
+        RecordDetails = []
+        for label, region in tmp:
+            for start, end in region:
+                RecordDetails.append(
+                    (self._chro, '.', label, start + 1, end, '.', self._strand, '.', attr)
+                )
+        order = False if self._strand == '+' else True
+        RecordDetails = sorted(RecordDetails, key=lambda x: x[3], reverse=order)
+        fp.write(self.__class__.__list2str(RecordTranscript))
+        for feature in RecordDetails:
+            fp.write(self.__class__.__list2str(feature))
+
+    def __attri_of_gtfline(self):
+        skipkeys = {
+            'gene_id', 'gene_name', 'gene_type', 'gene_biotype',
+            'transcript_id', 'transcript_name', 'transcript_type',
+            'transcript_biotype', 'Parent', 'ID', 'gene', 'gbkey', 'Name',
         }
-        keys = set(hash.keys()) - defaultkey
-        supply_info = {i: hash[i] for i in keys}
-        tmp = None
-        if keys:
-            tmp = ' '.join(
-                ['{} "{}";'.format(i[0], i[1]) for i in supply_info.items() if i[1]]
-            )
-        return tmp
-
-    def __UTR_identify(self):
-        utr = []
-        if self._cds and self._exon and (self._cds != self._exon):
-            coding_start, coding_end = self._cds[0][0], self._cds[-1][1]
-            pos_s = '5UTR' if self._strand == '+' else '3UTR'
-            pos_l = '3UTR' if self._strand == '+' else '5UTR'
-            for each in self._exon:
-                start, end = each
-                if start < end < coding_start:
-                    utr.append([pos_s, start, end])
-                elif start < coding_start < end:
-                    utr.append([pos_s, start, coding_start])
-                if start < coding_end < end:
-                    utr.append([pos_l, coding_end, end])
-                elif coding_end < start < end:
-                    utr.append([pos_l, start, end])
-        return utr
+        keepkeys = set(self._attributes.keys()) - skipkeys
+        attr = ['transcript_id "{}"; gene_id "{}"; '.format(self.id, self.gene_id), ]
+        keys = ['transcript_name', 'gene_name', 'transcript_type', 'gene_type']
+        for key in keys:
+            value = self._attributes.get(key, None)
+            if value:
+                attr.append('{} "{}"; '.format(key, value))
+        attr += ['{} "{}"; '.format(i, self._attributes[i]) for i in keepkeys]
+        return ''.join(attr)
 
     @classmethod
     def __list2str(cls, lst):
         return '{}\n'.format('\t'.join([str(i) for i in lst]))
 
-    def to_gtf(self, fp):
-        '''
-            parameter
-            ---------
-            fp:    file handle for output standrand GTF file
-        '''
-        type_t = 'transcript_type "{}"; '.format(self._type) if self._type else ''
-        type_g = 'gene_type "{}"; '.format(self._gene_type) if self._gene_type else ''
-        name_t = 'transcript_name "{}"; '.format(self._transcript_name) if self._transcript_name else ''
-        name_g = 'gene_name "{}"; '.format(self._gene_name) if self._gene_name else ''
-        identifier = 'transcript_id "{}"; gene_id "{}"; '.format(self._name, self._gene_id)
-        supply_info = self.__supply_annot_for_gtf(self._supply)
-        supply_info = supply_info if supply_info else ''
-        attr = ''.join([identifier, type_t, type_g, name_t, name_g, supply_info])
-
-        transcript = [
-            self._chro,
-            '.',
-            'transcript',
-            self._start + 1,
-            self._end,
-            '.',
-            self._strand,
-            '.',
-            attr,
-        ]
-        fp.write(self.__class__.__list2str(transcript))
-
-        Feature = []
-        order = False if self._strand == '+' else True
-        if self._exon:
-            for i, each in enumerate(self._exon):
-                start, end = each
-                Feature.append(
-                    [self._chro, '.', 'exon', start + 1, end, '.', self._strand, '.', attr]
-                )
-        if self._cds:
-            for i, each in enumerate(self._cds):
-                start, end = each
-                Feature.append(
-                    [self._chro, '.', 'CDS', start + 1, end, '.', self._strand, '.', attr]
-                )
-        UTR = self.__UTR_identify()
-        for utr in UTR:
-            labels, start, end = utr
-            Feature.append(
-                [self._chro, '.', labels, start + 1, end, '.', self._strand, '.', attr]
-            )
-        Feature = sorted(Feature, key=lambda x: x[3], reverse=order)
-        for each in Feature:
-            fp.write(self.__class__.__list2str(each))
-
     def to_bed(self, fp):
         '''
-            parameter
-            ---------
-            fp:    file handle for output 12 columns bed file
+        parameter
+        ---------
+        fp:    file handle for output 12 columns bed file
         '''
-        if self._cds:
-            cstart = self._cds[0][0]
-            cend = self._cds[-1][1]
-            # coding transcript
-        else:
-            cstart, cend = self._end, self._end
-            # non coding transcript
-        exon_num = len(self._exon)
+        cstart, cend = self._codingregion if self._cds else (self._end, self._end)
+        exon_num = self.exon_count
         exon_len = ''.join(['{},'.format(x[1] - x[0]) for x in self._exon])
         exon_start = ''.join(['{},'.format(x[0] - self._start) for x in self._exon])
 
-        transcript = [
+        Record = (
             self._chro,
             self._start,
             self._end,
-            self._name,
+            self.name,
             0,
             self._strand,
             cstart,
@@ -491,36 +453,31 @@ class Transcript(object):
             exon_num,
             exon_len,
             exon_start,
-        ]
-        fp.write(self.__class__.__list2str(transcript))
+        )
+        fp.write(self.__class__.__list2str(Record))
 
-    def to_genePred(self, fp, CIRCexplorer2=False):
+    def to_genePred(self, fp, refFlat=False):
         '''
-            parameter
-            ---------
-            fp:     file handle for output GenePred file,
-            CIRCexplorer2:   bool
-                whether create CIRCexplorer2 style genePred, {True, False}
+        parameter
+        ---------
+        fp:     file handle for output GenePred file,
+        refFlat:   bool
+            whether create refFlat style genePred, {True, False}
 
-            reference
-            ---------
-            url: https://genome.ucsc.edu/FAQ/FAQformat#format9
-            CIRCexplorer2_format:
-                http://circexplorer2.readthedocs.io/en/latest/tutorial/setup/
+        reference
+        ---------
+        url: https://genome.ucsc.edu/FAQ/FAQformat#format9
         '''
-        if self._cds:
-            cstart = self._cds[0][0]
-            cend = self._cds[-1][1]
-            # coding transcript
+        if self._codingregion:
+            cstart, cend = self._codingregion
         else:
             cstart, cend = self._end, self._end
-            # non coding transcript
-        exon_num = len(self._exon)
+        exon_num = self.exon_count
         estart = ''.join(['{},'.format(i[0]) for i in self._exon])
         eend = ''.join(['{},'.format(i[1]) for i in self._exon])
 
-        transcript = [
-            self._name,
+        Record = [
+            self.name,
             self._chro,
             self._strand,
             self._start,
@@ -531,175 +488,135 @@ class Transcript(object):
             estart,
             eend,
         ]
-        if CIRCexplorer2:
-            transcript.insert(0, self._gene_id)
-        fp.write(self.__class__.__list2str(transcript))
+        if refFlat:
+            Record.insert(0, self.gene_id)
+        fp.write(self.__class__.__list2str(Record))
 
-    def extract_genomic_seq(self, seq_dict, fp):
+    def overlap_with(self, transcript):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        seq = seq_dict[self._chro][self._start : self._end]
-        wanted = Sequence(
-            '{}_genomic'.format(self._name),
+        flag = False
+        if self.chro == transcript.chro:
+            if (self.start <=  transcript.start < self.end) or (self.start < transcript.end <= self.end):
+                flag = True
+        return flag
+
+    def __extract_seq(self, faidx, chro, start, end):
+        try:
+            seq = faidx[chro][start:end]
+        except KeyError:
+            seq = ''
+            logger.error('Chromesome("{}") does not exist in fasta file, Skip...'.format(chro))
+        return seq
+
+    def extract_genomic_seq(self, seqfp):
+        '''
+        parameter
+        ---------
+        seqfp: dict
+            {chro: seq, }
+        '''
+        seq = self.__extract_seq(seqfp, self._chro, self._start, self._end)
+        obj = Sequence(
+            '{}'.format(self._id),
             seq,
-            'gene_id:{}'.format(self._gene_id)
+            'genomic sequence, gene_id:{}'.format(self.gene_id)
         )
         if self._strand == '-':
-            wanted = wanted.reverse_complement()
-        wanted.write_to_fasta_file(fp)
+            obj = obj.reverse_complement()
+        return (obj, )
 
-    def extract_isoform_seq(self, seq_dict, fp):
+    def extract_isoform_seq(self, seqfp):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        if self._exon is None:
-            logger.info('{}: -- not annot exon --'.format(self._name))
-            return None
-        seqtmp = ''
-        for each in self._exon:
-            start, end = each
-            seqtmp += seq_dict[self._chro][start:end]
-        wanted = Sequence(self._name, seqtmp, 'gene_id:{}'.format(self._gene_id))
+        seq = ''.join([self.__extract_seq(seqfp, self._chro, x, y) for x, y in self._exon])
+        obj = Sequence(
+            self._id, seq, 'transcript sequence, gene_id:{}'.format(self.gene_id)
+        )
         if self._strand == '-':
-            wanted = wanted.reverse_complement()
-        wanted.write_to_fasta_file(fp)
+            obj = obj.reverse_complement()
+        return (obj, )
 
-    def extract_CDS_seq(self, seq_dict, fp):
+    def extract_cds_seq(self, seqfp):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        if self._cds is None:
-            logger.info('{}: -- not annot CDS --'.format(self._name))
-            return None
-        seqtmp = ''
-        for each in self._cds:
-            start, end = each
-            seqtmp += seq_dict[self._chro][start:end]
-        wanted = Sequence(self._name, seqtmp, 'gene_id:{}'.format(self._gene_id))
+        seq = ''.join([self.__extract_seq(seqfp, self._chro, x, y) for x, y in self._cds])
+        obj = Sequence(
+            self._id, seq, 'coding sequence, gene_id:{}'.format(self.gene_id)
+        )
         if self._strand == '-':
-            wanted = wanted.reverse_complement()
-        wanted.write_to_fasta_file(fp)
+            obj = obj.reverse_complement()
+        return (obj, )
 
-    def extract_exon_seq(self, seq_dict, fp):
+    def extract_exon_seq(self, seqfp):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        if self._exon is None:
-            logger.info('{}: -- not annot exon --'.format(self._name))
-            return None
-        exon_num = len(self._exon)
-        for index, each in enumerate(self._exon):
-            start, end = each
+        objlst = []
+        exon_num = self.exon_count
+        for index, (x, y) in enumerate(self._exon):
             order = index + 1 if self._strand == '+' else exon_num - index
-            wanted = Sequence(
-                '{}_exon{}'.format(self._name, order),
-                seq_dict[self._chro][start:end],
-                'gene_id:{}'.format(self._gene_id),
+            obj = Sequence(
+                '{}_exon{}'.format(self._id, order),
+                self.__extract_seq(seqfp, self._chro, x, y),
+                'exonic sequence, gene_id:{}'.format(self.gene_id),
             )
-            wanted = wanted.reverse_complement() if self._strand == '-' else wanted
-            wanted.write_to_fasta_file(fp)
+            if self._strand == '-':
+                obj = obj.reverse_complement()
+            objlst.append(obj)
+        return tuple(objlst)
 
-    def extract_intron_seq(self, seq_dict, fp):
+    def extract_intron_seq(self, seqfp):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        if self._exon is None:
-            logger.info('{}: -- not annot exon --'.format(self._name))
-            return None
-        intron_num = len(self._exon) - 1
+        objlst = []
+        intron_num = self.exon_count - 1
         if intron_num >= 1:
             for index in range(intron_num):
-                _, start = self._exon[index]
-                end, _ = self._exon[index + 1]
+                _, x = self._exon[index]
+                y, _ = self._exon[index + 1]
                 order = index + 1 if self._strand == '+' else intron_num - index
-                wanted = Sequence(
-                    '{}_intron{}'.format(self._name, order),
-                    seq_dict[self._chro][start:end],
-                    'gene_id:{}'.format(self._gene_id),
+                obj = Sequence(
+                    '{}_intron{}'.format(self._id, order),
+                    self.__extract_seq(seqfp, self._chro, x, y),
+                    'intronic sequence, gene_id:{}'.format(self.gene_id),
                 )
-                wanted = wanted.reverse_complement() if self._strand == '-' else wanted
-                wanted.write_to_fasta_file(fp)
+                if self._strand == '-':
+                    obj = obj.reverse_complement()
+                objlst.append(obj)
+        return tuple(objlst)
 
-    def extract_UTR_seq(self, seq_dict, fp):
+    def extract_utr5_seq(self, seqfp):
         '''
-            parameter
-            ---------
-            seq_dict: dict
-                {chro: seq, }
-            fp:         file handle for output sequence file
         '''
-        UTR = self.__UTR_identify()
-        if UTR:
-            for index, utr in enumerate(UTR):
-                labels, start, end = utr
-                wanted = Sequence(
-                    '{}_{}_{}'.format(self._name, labels, index),
-                    seq_dict[self._chro][start:end],
-                    'gene_id:{}'.format(self._gene_id),
-                )
-                wanted = wanted.reverse_complement() if self._strand == '-' else wanted
-                wanted.write_to_fasta_file(fp)
-        else:
-            logger.info('{}: -- not annot exon and CDS --'.format(self._name))
-            return None
+        seq = ''.join([self.__extract_seq(seqfp, self._chro, x, y) for x, y in self._utr5])
+        obj = Sequence(
+            '{}_utr5'.format(self._id),
+            seq,
+            '5\' untranslated region sequence, gene_id:{}'.format(self.gene_id)
+        )
+        if self._strand == '-':
+            obj = obj.reverse_complement()
+        return (obj, )
 
-    # def structure_dat(self):
-    #     '''
-    #         specific function for plot gene structure
-    #
-    #         return
-    #         ------
-    #         list, 0-based postion
-    #             [start, end, [[es,ee],], [[cs,ce],], strand]
-    #     '''
-    #     return [self._start, self._end, self._exon, self._cds, self._strand]
-    #
-    #
-    # def gene_structure_for_itol(self):
-    #     '''
-    #     '''
-    #     start, end, strand = self._start, self._end, self._strand
-    #     if self._cds:
-    #         cds = [['CDS', i[0], i[1]] for i in self._cds]
-    #         utr = self.__UTR_identify()
-    #         feature = sorted(cds+utr, key=lambda x: x[1], reverse=False)
-    #     else:
-    #         feature = sorted([['EXON', i[0], i[1]] for i in self._exon],
-    #                          key=lambda x: x[1], reverse=False)
-    #     length = end-start
-    #     if strand == '+':
-    #         feature = [[i[0], i[1]-start, i[2]-start] for i in feature]
-    #     else:
-    #         feature = feature[::-1]
-    #         feature = [[i[0], end-i[2], end-i[1]] for i in feature]
-    #     # SHAPE|START|END|COLOR|LABEL
-    #     element = [self._name, str(length)]
-    #     for i in feature:
-    #         label, start, end = i
-    #         color = '#ff9800' if label=='CDS' or label=='EXON' else '#0067ff'
-    #         element.append('|'.join(['RE', str(start), str(end), color, label]))
-    #     return '\t'.join(element)
+    def extract_utr3_seq(self, seqfp):
+        '''
+        '''
+        seq = ''.join([self.__extract_seq(seqfp, self._chro, x, y) for x, y in self._utr3])
+        obj = Sequence(
+            '{}_utr3'.format(self._id),
+            seq,
+            '3\' untranslated region sequence, gene_id:{}'.format(self.gene_id)
+        )
+        if self._strand == '-':
+            obj = obj.reverse_complement()
+        return (obj, )
+
+    def extract_utr_seq(self, seqfp):
+        '''
+        '''
+        utr5, = self.extract_utr5_seq(seqfp)
+        utr3, = self.extract_utr3_seq(seqfp)
+        return (utr5, utr3)
 
 
 class GTF_Reader(Files):
@@ -707,8 +624,7 @@ class GTF_Reader(Files):
         File parser for GTF/GFF file of gene annotation
     '''
 
-    def __init__(self, gtf, suffix=None):
-        self.suffix = suffix
+    def __init__(self, gtf):
         self._transcript_feature = {'mRNA', 'transcript'}
         self._keep_feature = {
             'CDS',
@@ -732,103 +648,63 @@ class GTF_Reader(Files):
         Files.__init__(self, gtf)
 
     def __iter__(self):
-        logger.info('Skip known annotation feature: ({})'.format(', '.join(self._skip_feature)))
-
-        t_id, t_chro, t_gene = None, None, None
+        t_id, t_chro = None, None
         t_exon, t_cds, t_info = [], [], {}
-        for line in Files.__iter__(self):
-            if line.startswith('#'):
-                continue
-            chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
-            if feature not in self._keep_feature:
-                if feature not in self._skip_feature:
-                    logger.warning('skip novel annotation feature: {}'.format(feature))
-                continue
-            start, end = int(start) - 1, int(end)
-            if '=' in attr:
-                attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
-            else:
-                attr = [i.strip().partition(' ') for i in attr.split(';') if i.strip()]
-            attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
-            try:
-                line_id = attr['transcript_id']
-            except KeyError:
-                line_id = attr['ID'] if feature in self._transcript_feature else attr['Parent']
+        for line in self.__read_gtf():
+            chro, _, feature, start, end, _, strand, _, attr, line_id = line
 
-            logger.debug(line)
             if t_id and ((t_id != line_id) or ((t_id == line_id) and (t_chro != chro))):
-                yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
+                t_cds = sorted(t_cds, key=lambda x: x[0], reverse=False)
+                t_cds = (t_cds[0][0], t_cds[-1][-1])
+                logger.debug(t_cds)
+                yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info)
                 t_exon, t_cds, t_info = [], [], {}
 
             if feature in self._transcript_feature:
                 t_id = line_id
                 t_chro, t_start, t_end, t_strand = chro, start, end, strand
                 try:
-                    t_info['gene_id'] = attr['gene_id']
+                    t_info['gene_id'] = attr.pop('gene_id')
+                    t_info['gene_name'] = attr.pop('gene_name')
                 except KeyError:
-                    t_info['gene_id'] = attr['Parent']
-                # t_gene = t_info['gene_id']
-                try:
-                    t_info['transcript_type'] = attr['transcript_type']
-                    t_info['gene_type'] = attr['gene_type']
-                    t_info['transcript_name'] = attr['transcript_name']
-                    t_info['gene_name'] = attr['gene_name']
-                except KeyError:
-                    pass
+                    t_info['gene_id'] = attr.pop('Parent')
+                    t_info['transcript_name'] = attr.pop('Name')
+                t_info.update(attr)
             elif feature == 'exon':
-                t_exon.append([start, end])
+                t_exon.append((start, end))
             elif feature == 'CDS':
-                t_cds.append([start, end])
-        yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info, self.suffix)
+                t_cds.append((start, end))
+        t_cds = sorted(t_cds, key=lambda x: x[0], reverse=False)
+        t_cds = (t_cds[0][0], t_cds[-1][-1])
+        logger.debug(t_cds)
+        yield Transcript(t_id, t_chro, t_start, t_end, t_strand, t_exon, t_cds, t_info)
 
-    def Saft_Model(self):
+    def safe_mode(self):
         '''
-            parse GTF/GFF file and sava transcript structure data as python
-            object to memory, Saft_Model methods is Applicable to unsorted files,
+            parse structure data of GTF/GFF file as python object to memory,
+            safe_mode methods is Applicable to unsorted files,
             the same transcript annotation line is no longer in the same block
         '''
-        logger.info('Skip known annotation feature: ({})'.format(', '.join(self._skip_feature)))
         logger.info('Start Read gff file to python object...')
 
         transcriptlst, annot = [], {}
-        for line in Files.__iter__(self):
-            if line.startswith('#'):
-                continue
-            chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
-            if feature not in self._keep_feature:
-                if feature not in self._skip_feature:
-                    logger.warning('skip novel annotation feature: {}'.format(feature))
-                continue
+        for line in self.__read_gtf():
+            chro, _, feature, start, end, _, strand, _, attr, t_id = line
+            transcriptlst.append((chro, t_id))
 
-            start, end = int(start) - 1, int(end)
-            if '=' in attr:
-                attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
-            else:
-                attr = [i.strip().partition(' ') for i in attr.split(';') if i.strip()]
-            attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
-            try:
-                t_id = attr['transcript_id']
-            except KeyError:
-                t_id = attr['ID'] if feature in self._transcript_feature else attr['Parent']
-            transcriptlst.append(t_id)
-
-            if feature == 'transcript' or feature == 'mRNA':
-                annot.setdefault(t_id, {})['pos'] = [chro, start, end, strand]
+            if feature in self._transcript_feature:
+                annot.setdefault((chro, t_id), {})['pos'] = [chro, start, end, strand]
                 try:
-                    annot[t_id]['gene_id'] = attr['gene_id']
+                    geneid = attr.pop('gene_id')
                 except KeyError:
-                    annot[t_id]['gene_id'] = attr['Parent']
-                try:
-                    annot[t_id]['transcript_type'] = attr['transcript_type']
-                    annot[t_id]['gene_type'] = attr['gene_type']
-                    annot[t_id]['transcript_name'] = attr['transcript_name']
-                    annot[t_id]['gene_name'] = attr['gene_name']
-                except KeyError:
-                    pass
+                    geneid = attr.pop('Parent')
+                t_info = {'gene_id': geneid}
+                t_info.update(attr)
+                annot[(chro, t_id)]['attri'] = t_info
             elif feature == 'exon':
-                annot.setdefault(t_id, {}).setdefault('exon', []).append([start, end])
+                annot.setdefault((chro, t_id), {}).setdefault('exon', []).append((start, end))
             elif feature == 'CDS':
-                annot.setdefault(t_id, {}).setdefault('cds', []).append([start, end])
+                annot.setdefault((chro, t_id), {}).setdefault('cds', []).append((start, end))
 
         logger.info('Done of parse gff, sort transcript list...')
         transcriptlst = sorted(
@@ -837,23 +713,46 @@ class GTF_Reader(Files):
             reverse=False
         )
         logger.info('Done of sort transcript list.')
-        for iso in transcriptlst:
-            chro, start, end, strand = annot[iso]['pos']
-            exon = annot[iso].get('exon', None)
-            cds = annot[iso].get('cds', None)
+        for CHR, iso in transcriptlst:
+            chro, start, end, strand = annot[(CHR, iso)]['pos']
+            assert CHR == chro, ''
+            exon = annot[(CHR, iso)].get('exon', None)
+            cds = annot[(CHR, iso)].get('cds', None)
+            t_info = annot[(CHR, iso)].get('attri', None)
             if not any([exon, cds]):
-                exon = [[start, end]]
+                exon = [(start, end)]
             elif not exon:
                 exon = cds.copy()
-            t_info = {
-                'gene_id': annot[iso].get('gene_id', None),
-                'gene_name': annot[iso].get('gene_name', None),
-                'gene_type': annot[iso].get('gene_type', None),
-                'transcript_name': annot[iso].get('transcript_name', None),
-                'transcript_type': annot[iso].get('transcript_type', None),
-            }
-            t_info = annot[iso]
-            yield Transcript(iso, chro, start, end, strand, exon, cds, t_info, self.suffix)
+            if cds:
+                cds = sorted(cds, key=lambda x: x[0], reverse=False)
+                cds = (cds[0][0], cds[-1][-1])
+            yield Transcript(iso, chro, start, end, strand, exon, cds, t_info)
+
+    def __read_gtf(self):
+        logger.info((
+            'Skip known annotation feature: \n'
+            '    ({})'.format(', '.join(self._skip_feature))
+        ))
+        for line in Files.__iter__(self):
+            if line.startswith('#') or not line.strip():
+                continue
+            # logger.debug(line)
+
+            chro, source, feature, start, end, score, strand, frame, attr = line.strip().split('\t')
+            if feature not in self._keep_feature:
+                if feature not in self._skip_feature:
+                    logger.warning('skip novel annotation feature: {}'.format(feature))
+                continue
+            start, end = int(start) - 1, int(end)
+            if '=' in attr:
+                attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
+                attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
+                line_id = attr['ID'] if feature in self._transcript_feature else attr['Parent']
+            else:
+                attr = [i.strip().partition(' ') for i in attr.split(';') if i.strip()]
+                attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
+                line_id = attr['transcript_id']
+            yield chro, source, feature, start, end, score, strand, frame, attr, line_id
 
 
 class RefSeq_GFF_Reader(Files):
@@ -865,48 +764,79 @@ class RefSeq_GFF_Reader(Files):
         Files.__init__(self, gtf)
         self._chrom = self.__convert_chrom_id(chrom) if chrom else {}
 
+    def __convert_chrom_id(self, tab):
+        with open(tab) as f:
+            tab = [i.strip().split()[:2] for i in f if not i.startswith('#')]
+        return {i[0]: i[1] for i in tab}
+
     def __iter__(self):
         genelst, annot = self.__parse_gff()
-        for gene in genelst:
-            for iso in annot[gene]:
-                chro, start, end, strand = annot[gene][iso]['infor']
+        for CHR, gene in genelst:
+            for iso in annot[(CHR, gene)]:
+                chro, start, end, strand = annot[(CHR, gene)][iso]['infor']
+                assert CHR == chro, ''
                 chro = self._chrom.get(chro, chro)
-                gene_name = annot[gene][iso]['gene_name']
-                gene_type = annot[gene][iso]['gene_type']
-                transcript_name = annot[gene][iso]['transcript_name']
-                transcript_type = annot[gene][iso]['transcript_type']
-                exon = annot[gene][iso].get('exon', None)
-                cds = annot[gene][iso].get('CDS', None)
+                exon =  annot[(CHR, gene)][iso].get('exon', None)
+                cds  =  annot[(CHR, gene)][iso].get('cds', None)
+                attri = annot[(CHR, gene)][iso].get('attri', None)
                 if not any([exon, cds]):
-                    exon = [[start, end]]
+                    exon = [(start, end)]
                 elif not exon:
                     exon = cds.copy()
-                t_info = {
-                    'gene_id': gene,
-                    'gene_name': gene_name,
-                    'gene_type': gene_type,
-                    'transcript_name': transcript_name,
-                    'transcript_type': transcript_type,
-                    'EntrezID': annot[gene][iso]['EntrezID']
-                }
-                yield Transcript(iso, chro, start, end, strand, exon, cds, t_info)
+                if cds:
+                    cds = sorted(cds, key=lambda x: x[0], reverse=False)
+                    cds = (cds[0][0], cds[-1][-1])
+                yield Transcript(iso, chro, start, end, strand, exon, cds, attri)
 
     def __parse_gff(self):
-        SKIP = {
+        RegulateRegion = {
+            'DNAseI_hypersensitive_site',
+            'enhancer',
+            'enhancer_blocking_element',
+            'insulator',
+            'promoter',
+            'protein_binding_site',
+            'replication_regulatory_region',
+            'transcriptional_cis_regulatory_region',
+        }
+        logger.info((
+            'skip annotation feature as Regulating region: \n'
+            '    ({})'.format(', '.join(RegulateRegion))
+        ))
+
+        MotifRegion = {
+            'centromere',
+            'direct_repeat',
+            'microsatellite',
+            'tandem_repeat',
+            'mobile_genetic_element',
+            'nucleotide_motif',
+            'repeat_instability_region',
+        }
+        logger.info((
+            'skip annotation feature as Motif sequence region: \n'
+            '    ({})'.format(', '.join(MotifRegion))
+        ))
+
+        UnknownRegion = {
             'cDNA_match',
             'repeat_region',
             'D_loop',
-            'enhancer',
             'match',
-            'promoter',
             'region',
             'origin_of_replication',
-            'centromere',
             'sequence_feature',
             'biological_region',    # Igl
             'sequence_alteration',
+            'CAGE_cluster',
+            'meiotic_recombination_region',
+            'mitotic_recombination_region',
         }
-        logger.info('Skip annotation feature: ({})'.format(', '.join(SKIP)))
+        logger.info((
+            'skip annotation feature of unknown: \n'
+            '    ({})'.format(', '.join(UnknownRegion))
+        ))
+        SkipRegion = UnknownRegion | MotifRegion | RegulateRegion
 
         TRANSCRIPT = {
             'mRNA',
@@ -933,182 +863,107 @@ class RefSeq_GFF_Reader(Files):
             'guide_RNA',
             'scRNA',
         }
-        logger.info('the following annotation feature as transcript: ({})'.format(', '.join(TRANSCRIPT)))
+        logger.info((
+            'the following annotation feature as transcript: \n'
+            '    ({})'.format(', '.join(TRANSCRIPT))
+        ))
 
         logger.info('Start Read gff file to python object...')
-        pattern_ENTREZID = re.compile(r'GeneID:(\d+)')
-        pattern_HGNC = re.compile(r'HGNC:(\d+)')
-        geneidlst, gene_annot = [], {}
-        transcript_annot, transcript_structure = {}, {}
+        Gidlst, GAnnot, TAnnot, Tstructure = [], {}, {}, {}
         for line in Files.__iter__(self):
-            if line.startswith('#'):
+            if line.startswith('#') or not line.strip():
                 continue
             chro, _, feature, start, end, _, strand, _, attr = line.strip().split('\t')
-            if feature in SKIP:
+            if feature in SkipRegion:
                 continue
 
             start, end = int(start) - 1, int(end)
             attr = [i.strip().partition('=') for i in attr.split(';') if i.strip()]
             attr = {i[0]: i[2].strip('\'\t\n\r"') for i in attr}
+            Dbxref = [i.partition(':') for i in attr.pop('Dbxref', '').split(',')]
+            Dbxref = {i[0]: i[2].strip('\'\t\n\r"') for i in Dbxref}
+            attr.update(Dbxref)
 
-            try:
-                ENTREZID = pattern_ENTREZID.search(attr['Dbxref']).group(1)
-            except:
-                ENTREZID = None
-            try:
-                HGNCID = pattern_HGNC.search(attr['Dbxref']).group(1)
-            except:
-                HGNCID = None
             if feature == 'gene' or feature == 'pseudogene':
-                line_id = attr['ID']
-                geneidlst.append(line_id)
-                try:
-                    gchro, _, _, _ = gene_annot[line_id]['infor']
-                    if gchro == chro:
-                        logger.error('Find duplicate gene({}) annotation line: {}'.format(line_id, line))
-                        sys.exit(1)
-                    else:
-                        logger.warning('Duplicate gene_id({}) on different chromosome'.format(line_id))
-                except KeyError:
-                    pass
-                gene_annot.setdefault(line_id, {})['infor'] = [chro, start, end, strand]
-                gene_annot[line_id]['gene_name'] = attr['Name']
-                gene_annot[line_id]['gene_type'] = attr['gene_biotype']
-                gene_annot[line_id]['EntrezID'] = ENTREZID
-                gene_annot[line_id]['HGNC'] = HGNCID
-
+                line_id = attr.pop('ID')
+                Gidlst.append((chro, line_id))
+                GAnnot.setdefault((chro, line_id), {})['infor'] = [chro, start, end, strand]
+                attr['gene_name'] = attr.pop('Name')
+                attr['gene_type'] = attr.pop('gene_biotype')
+                GAnnot[(chro, line_id)]['attri'] = attr
             elif feature in TRANSCRIPT:
-                g_id = attr['Parent']
-                t_id = attr['ID']
-                geneidlst.append(g_id)
-                transcript_annot.setdefault(g_id, {}).setdefault(t_id, {})['infor'] = [chro, start, end, strand]
+                g_id = attr.pop('Parent')
+                t_id = attr.pop('ID')
+                Gidlst.append((chro, g_id))
+                TAnnot.setdefault((chro, g_id), {}).setdefault(t_id, {})['infor'] = [chro, start, end, strand]
                 if feature == 'miRNA':
-                    transcript_id = attr['product']
-                    transcript_name = attr['product']
-                    transcript_type = 'miRNA'
+                    attr['transcript_id'] = attr.pop('product')
+                    attr['transcript_name'] = attr.pop('gene')
+                    attr['transcript_type'] = 'miRNA'
                 elif feature == 'tRNA':
-                    transcript_id = attr['ID']
-                    transcript_name = attr['ID']
-                    transcript_type = 'tRNA'
+                    attr['transcript_id'] = t_id
+                    attr['transcript_name'] = t_id
+                    attr['transcript_type'] = 'tRNA'
                 else:
-                    transcript_id = attr.get('transcript_id', t_id)
-                    transcript_name = attr.get('Name', transcript_id)
+                    attr['transcript_id'] = attr.get('transcript_id', t_id)
+                    attr['transcript_name'] = attr.get('Name', t_id)
                     tmp = attr['gbkey']
-                    transcript_type = 'protein_coding' if tmp == 'mRNA' else tmp
-                transcript_annot[g_id][t_id]['transcript_id'] = transcript_id
-                transcript_annot[g_id][t_id]['transcript_name'] = transcript_name
-                transcript_annot[g_id][t_id]['transcript_type'] = transcript_type
-                transcript_annot[g_id][t_id]['EntrezID'] = ENTREZID
-                transcript_annot[g_id][t_id]['HGNC'] = HGNCID
+                    attr['transcript_type'] = 'protein_coding' if tmp == 'mRNA' else tmp
+                TAnnot[(chro, g_id)][t_id]['attri'] = attr
             elif feature == 'exon':
-                t_id = attr['Parent']
-                transcript_structure.setdefault(t_id, {}).setdefault('exon', []).append([start, end])
+                t_id = attr.pop('Parent')
+                Tstructure.setdefault((chro, t_id), {}).setdefault('exon', []).append((start, end))
             elif feature == 'CDS':
-                t_id = attr['Parent']
-                transcript_structure.setdefault(t_id, {}).setdefault('CDS', []).append([start, end])
+                t_id = attr.pop('Parent')
+                Tstructure.setdefault((chro, t_id), {}).setdefault('cds', []).append((start, end))
             else:
-                logger.warning('Skip A novel annotation feature: {}'.format(feature))
+                logger.warning('skip novel annotation feature: {}'.format(feature))
 
         logger.info('Done of Read gff, sort transcript list...')
-        geneidlst = sorted(set(geneidlst), key=lambda x: geneidlst.index(x), reverse=False)
-        logger.info('Done of sort transcript list, convert raw annot infor to appropriate transcript structure annotation...')
+        Gidlst = sorted(
+            set(Gidlst), key=lambda x: Gidlst.index(x), reverse=False
+        )
+        logger.info((
+            'Done of sort transcript list, convert raw annot infor to '
+            'appropriate transcript structure annotation...'
+        ))
         annot = {}
-        for index, gene in enumerate(geneidlst):
+        for index, (CHR, gene) in enumerate(Gidlst):
             if index % 5000 == 0 and index != 0:
                 logger.info('Already processed gene NO. : {}'.format(index))
 
-            infor_gene = gene_annot.get(gene, None)
-            infor_transcript = transcript_annot.get(gene, None)
-            flag_gene = True
-            if infor_gene is None:
-                flag_gene = False
-
+            infor_gene = GAnnot.get((CHR, gene), None)
+            infor_transcript = TAnnot.get((CHR, gene), None)
             if infor_transcript is None:
-                logger.debug('Missing transcript feature line for gene: {}'.format(gene))
-                chro, start, end, strand = infor_gene['infor']
-                gene_name = infor_gene['gene_name']
-                gene_type = infor_gene['gene_type']
-                annot.setdefault(gene, {}).setdefault(gene, {})['infor'] = [chro, start, end, strand]
-                annot[gene][gene]['gene_name'] = gene_name
-                annot[gene][gene]['gene_type'] = gene_type
-                annot[gene][gene]['EntrezID'] = infor_gene['EntrezID']
-                annot[gene][gene]['HGNC'] = infor_gene['HGNC']
-                annot[gene][gene]['transcript_name'] = gene_name
-                annot[gene][gene]['transcript_type'] = gene_type
-                # exon, CDS
-                try:
-                    exon = transcript_structure[gene]['exon']
-                except KeyError:
-                    exon = None
-                try:
-                    cds = transcript_structure[gene]['CDS']
-                except KeyError:
-                    cds = None
-                if not any([exon, cds]):
-                    logger.debug('Missing exon, CDS feature line for gene: {}'.format(gene))
-                    annot[gene][gene]['exon'] = [[start, end], ]
-                else:
-                    annot[gene][gene]['exon'] = exon
-                    annot[gene][gene]['CDS'] = cds
+                logger.debug('Missing transcript feature line of gene: {}'.format(gene))
+                annot.setdefault((CHR, gene), {}).setdefault(gene, {})['infor'] = infor_gene['infor']
+                annot[(CHR, gene)][gene]['attri'] = infor_gene['attri']
+                annot[(CHR, gene)][gene]['exon'] = Tstructure.get((CHR, gene), {}).get('exon', None)
+                annot[(CHR, gene)][gene]['cds'] = Tstructure.get((CHR, gene), {}).get('cds', None)
             else:
                 for iso in infor_transcript:
                     chro, start, end, strand = infor_transcript[iso]['infor']
-                    transcript_id = infor_transcript[iso]['transcript_id']
-                    if flag_gene:
-                        EntrezID = infor_gene['EntrezID']
-                        HGNC = infor_gene['HGNC']
-                        gene_name = infor_gene['gene_name']
-                        gene_type = infor_gene['gene_type']
+                    attri = infor_transcript[iso]['attri']
+                    if infor_gene:
                         G_chro, G_start, G_end, G_strand = infor_gene['infor']
-                    else:
-                        EntrezID = infor_transcript[iso]['EntrezID']
-                        HGNC = infor_transcript[iso]['HGNC']
-                        msg = ('Missing gene feature annotation for transcript({}), '
-                               'use transcript infor as gene infor').format(gene)
-                        logger.warning(msg)
-                        gene_name = infor_transcript[iso]['transcript_name']
-                        gene_type = infor_transcript[iso]['transcript_type']
-                        G_chro, G_start, G_end, G_strand = infor_transcript[iso]['infor']
-                    msg = 'transcript({}) region over range of gene({}) region'.format(transcript_id, gene)
-                    assert G_start <= start < end <= G_end, msg
-                    msg = 'chro is inconsistent of transcript({}) and gene({})'.format(transcript_id, gene)
-                    assert chro == G_chro, msg
-                    msg = ('Transcription direction(strand) is inconsistent of '
-                           'transcript({}) and gene({})').format(transcript_id, gene)
-                    assert strand == G_strand, msg
-
-                    transcript_type = infor_transcript[iso]['transcript_type']
-                    if gene_type == 'other':
-                        gene_type = transcript_type
-                    annot.setdefault(gene, {}).setdefault(transcript_id, {})['infor'] = [chro, start, end, strand]
-                    annot[gene][transcript_id]['gene_name'] = gene_name
-                    annot[gene][transcript_id]['gene_type'] = gene_type
-                    annot[gene][transcript_id]['transcript_name'] = infor_transcript[iso]['transcript_name']
-                    annot[gene][transcript_id]['transcript_type'] = transcript_type
-                    annot[gene][transcript_id]['EntrezID'] = EntrezID
-                    annot[gene][transcript_id]['HGNC'] = HGNC
-                    # CDS, exon
-                    try:
-                        exon = transcript_structure[iso]['exon']
-                    except KeyError:
-                        exon = None
-                    try:
-                        cds = transcript_structure[iso]['CDS']
-                    except KeyError:
-                        cds = None
-                    if not any([exon, cds]):
-                        logger.info('Missing exon, CDS feature line for transcript: {}'.format(transcript_id))
-                        annot[gene][transcript_id]['exon'] = [[start, end], ]
-                    else:
-                        annot[gene][transcript_id]['exon'] = exon
-                        annot[gene][transcript_id]['CDS'] = cds
+                        msg = 'transcript({}) region over range of gene({}) region'.format(iso, gene)
+                        assert G_start <= start < end <= G_end, msg
+                        msg = 'chro is inconsistent of transcript({}) and gene({})'.format(iso, gene)
+                        assert chro == G_chro, msg
+                        msg = ('Transcription direction(strand) is inconsistent of '
+                               'transcript({}) and gene({})').format(iso, gene)
+                        assert strand == G_strand, msg
+                        Gattr = infor_gene['attri']
+                        attri.update(Gattr)
+                    annot.setdefault((chro, gene), {}).setdefault(iso, {})['infor'] = infor_transcript[iso]['infor']
+                    if attri.get('gene_type', '') == 'other':
+                        attri['gene_type'] = attri['transcript_type']
+                    annot[(chro, gene)][iso]['attri'] = attri
+                    structure = Tstructure.get((chro, iso), Tstructure.get((chro, gene), {}))
+                    annot[(chro, gene)][iso]['exon'] = structure.get('exon', None)
+                    annot[(chro, gene)][iso]['cds'] = structure.get('cds', None)
         logger.info('Done of parse gff.')
-        return geneidlst, annot
-
-    def __convert_chrom_id(self, tab):
-        with open(tab) as f:
-            tab = [i.strip().split()[:2] for i in f if not i.startswith('#')]
-        return {i[0]: i[1] for i in tab}
+        return Gidlst, annot
 
 
 class Bed_Reader(Files):
@@ -1123,20 +978,165 @@ class Bed_Reader(Files):
             start, end, cstart, cend = map(int, [start, end, cstart, cend])
             elen = [int(i) for i in elen.split(',') if i]
             estart = [int(i) + start for i in estart.split(',') if i]
+            assert len(estart)==len(elen), 'Error line: {}'.format(line)
+
             eend = [estart[i] + elen[i] for i, j in enumerate(elen)]
-            EXON = [[estart[i], eend[i]] for i, j in enumerate(estart)]
+            EXON = [(estart[i], eend[i]) for i, j in enumerate(estart)]
             if cstart == cend:
                 CDS = []
+                attri = {'transcript_type': 'noncoding'}
             else:
-                CDS = [i.copy() for i in EXON if i[1] > cstart]
-                CDS = [i for i in CDS if i[0] < cend]
-                CDS[0][0] = cstart
-                CDS[-1][1] = cend
-            yield Transcript(name, chro, start, end, strand, EXON, CDS)
+                CDS = (cstart, cend)
+                attri = {'transcript_type': 'protein_coding'}
+            yield Transcript(name, chro, start, end, strand, EXON, CDS, attri)
 
 
-# if __name__ == '__main__':
-#     _, gff, output = sys.argv
-#     with open(output, 'w') as f:
-#         for i in GTF_Reader(gff):
-#             i.to_gtf(f)
+class genePred_Reader(Files):
+    '''
+    '''
+    def __init__(self, refFlat):
+        Files.__init__(self, refFlat)
+
+    def __iter__(self):
+        for line in Files.__iter__(self):
+            try:
+                Tname, chro, strand, start, end, cstart, cend, ecount, estart, eend = line.strip().split('\t')
+                Gname = None
+            except:
+                Gname, Tname, chro, strand, start, end, cstart, cend, ecount, estart, eend = line.strip().split('\t')
+            start, end, cstart, cend, ecount = map(int, [start, end, cstart, cend, ecount])
+            estart = [int(i) for i in estart.split(',') if i]
+            eend = [int(i) for i in eend.split(',') if i]
+            assert len(estart)==len(eend)==ecount, 'Error line: {}'.format(line)
+
+            EXON = [(estart[i], eend[i]) for i, j in enumerate(estart)]
+            if cstart == cend:
+                CDS = None
+                attri = {'transcript_type': 'noncoding'}
+            else:
+                CDS = (cstart, cend)
+                attri = {'transcript_type': 'protein_coding'}
+            if Gname:
+                attri['gene_id'] = Gname
+                attri['gene_name'] = Gname
+            yield Transcript(Tname, chro, start, end, strand, EXON, CDS, attri)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        prog='pyGTF',
+        usage='''
+        python %(prog)s --input --infmt --output --outfmt
+        python %(prog)s --input --infmt --Genome --Feature --Sequence ''',
+        description='''convert different gene annotation format''',
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog='''
+        Note: '''
+    )
+    parser.add_argument(
+        '-i', '--input',
+        dest='input',
+        metavar='',
+        help='input annot file, '
+    )
+    parser.add_argument(
+        '-ifm', '--infmt',
+        dest='format',
+        metavar='',
+        choices=('gtf', 'bed', 'genePred', 'refseq_gff'),
+        help='file format of input, (gtf, bed, genePred, refseq_gff)'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        dest='output',
+        metavar='',
+        help='output annot file, '
+    )
+    parser.add_argument(
+        '-ofm', '--outfmt',
+        dest='outfmt',
+        metavar='',
+        choices=('gtf', 'bed', 'genePred'),
+        help='file format of output, (gtf, bed, genePred)'
+    )
+    parser.add_argument(
+        '-G', '--Genome',
+        dest='Genome',
+        metavar='',
+        help='Genome file'
+    )
+    parser.add_argument(
+        '-F', '--Feature',
+        dest='Feature',
+        metavar='',
+        choices=('genomic', 'transcript', 'cds', 'exon', 'intron', 'utr'),
+        help='sequence type, (genomic, transcript, cds, exon, intron, utr)'
+    )
+    parser.add_argument(
+        '-S', '--Sequence',
+        dest='Sequence',
+        metavar='',
+        help='output sequence file'
+    )
+    args = parser.parse_args()
+    inputfile = args.input
+    infmt = args.format
+    outputfile = args.output
+    outfmt = args.outfmt
+    Genome = args.Genome
+    Feature = args.Feature
+    OutSeq = args.Sequence
+
+    if not (
+        all([inputfile, infmt, outputfile, outfmt]) or
+        all([inputfile, infmt, Genome, Feature, OutSeq])
+    ):
+        parser.print_help()
+        sys.exit(1)
+
+    if infmt == 'gtf':
+        readfile = GTF_Reader
+    elif infmt == 'refseq_gff':
+        readfile = RefSeq_GFF_Reader
+    elif infmt == 'bed':
+        readfile = Bed_Reader
+    elif infmt == 'genePred':
+        readfile = genePred_Reader
+    else:
+        raise Exception('not support annot format')
+
+    if OutSeq:
+        genome = {i.name: i.seq for i in Fasta_Reader(Genome)}
+        fp = open(OutSeq, 'w')
+    if outputfile:
+        fo = open(outputfile, 'w')
+    for iso in readfile(inputfile):
+        if outfmt == 'gtf':
+            iso.to_gtf(fo)
+        elif outfmt == 'bed':
+            iso.to_bed(fo)
+        elif outfmt == 'genePred':
+            iso.to_genePred(fo)
+
+        if OutSeq:
+            if Feature == 'genomic':
+                tmp = iso.extract_genomic_seq(genome)
+            elif Feature == 'transcript':
+                tmp = iso.extract_isoform_seq(genome)
+            elif Feature == 'cds':
+                tmp = iso.extract_cds_seq(genome)
+            elif Feature == 'exon':
+                tmp = iso.extract_exon_seq(genome)
+            elif Feature == 'intron':
+                tmp = iso.extract_intron_seq(genome)
+            elif Feature == 'utr':
+                tmp = iso.extract_utr_seq(genome)
+
+            for s in tmp:
+                if s.is_empty:
+                    continue
+                s.write_to_fasta_file(fp)
+    if OutSeq:
+        fp.close()
+    if outputfile:
+        fo.close()
