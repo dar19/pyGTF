@@ -278,8 +278,9 @@ class Transcript(object):
             if utr5:
                 start, end = utr5.pop(); utr5.append((start, cstart))
             cds = [(x, y) for x, y in self._exon if (cstart < y <= cend) or (cstart <= x < cend)]
-            start, end = cds.pop(); cds.append((start, cend))
-            start, end = cds.pop(0); cds.insert(0, (cstart, end))
+            if cds:
+                start, end = cds.pop(); cds.append((start, cend))
+                start, end = cds.pop(0); cds.insert(0, (cstart, end))
             utr3 = [(x, y) for x, y in self._exon if y > cend]
             if utr3:
                 start, end = utr3.pop(0); utr3.insert(0, (cend, end))
