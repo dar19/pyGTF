@@ -36,7 +36,7 @@ class Files(object):
         elif self._fos.lower().endswith('.bz2'):
             fp = bz2.BZ2File(self._fos)
         else:
-            fp = open(self._fos)
+            fp = open(self._fos, encoding='utf-8')
 
         for index, line in enumerate(fp):
             if index % 50000 == 0 and index != 0:
@@ -98,13 +98,13 @@ class Sequence(object):
 
     def write_to_fasta_file(self, fp, chara=80):
         if self._descr:
-            fp.write('>{} {}\n'.format(self._id, self._descr))
+            fp.write('>{} {}\n'.format(self._id, self._descr).decode('utf-8'))
         else:
-            fp.write('>{}\n'.format(self._id))
-        fp.write('{}'.format(self.__class__._seq_formater(self._seq, chara)))
+            fp.write('>{}\n'.format(self._id).decode('utf-8'))
+        fp.write('{}'.format(self.__class__._seq_formater(self._seq, chara)).decode('utf-8'))
 
     def write_to_tab_file(self, fp):
-        fp.write('{}\t{}\n'.format(self._id, self._seq))
+        fp.write('{}\t{}\n'.format(self._id, self._seq).decode('utf-8'))
 
     @classmethod
     def _seq_formater(cls, seq, length):
@@ -149,13 +149,13 @@ class SequenceWithQual(Sequence):
         return len(self._seq)
 
     def write_to_fastq_file(self, fp):
-        fp.write('@{}\n'.format(self._id))
-        fp.write('{}\n'.format(self._seq))
-        fp.write('+\n{}\n'.format(self._qual))
+        fp.write('@{}\n'.format(self._id).decode('utf-8'))
+        fp.write('{}\n'.format(self._seq).decode('utf-8'))
+        fp.write('+\n{}\n'.format(self._qual).decode('utf-8'))
 
     def write_to_fasta_file(self, fp):
-        fp.write('>{}\n'.format(self._id))
-        fp.write('{}\n'.format(self._seq))
+        fp.write('>{}\n'.format(self._id).decode('utf-8'))
+        fp.write('{}\n'.format(self._seq).decode('utf-8'))
 
 
 class Fasta_Reader(Files):
@@ -277,7 +277,7 @@ class Transcript(object):
             utr5 = [(x, y) for x, y in self._exon if x < cstart]
             if utr5:
                 start, end = utr5.pop(); utr5.append((start, cstart))
-            cds = [(x, y) for x, y in self._exon if y > cstart or x < cend]
+            cds = [(x, y) for x, y in self._exon if (cstart < y <= cend) or (cstart <= x < cend)]
             start, end = cds.pop(); cds.append((start, cend))
             start, end = cds.pop(0); cds.insert(0, (cstart, end))
             utr3 = [(x, y) for x, y in self._exon if y > cend]
@@ -427,7 +427,7 @@ class Transcript(object):
 
     @classmethod
     def __list2str(cls, lst):
-        return '{}\n'.format('\t'.join([str(i) for i in lst]))
+        return '{}\n'.format('\t'.join([str(i) for i in lst])).decode('utf-8')
 
     def to_bed(self, fp):
         '''
@@ -765,7 +765,7 @@ class RefSeq_GFF_Reader(Files):
         self._chrom = self.__convert_chrom_id(chrom) if chrom else {}
 
     def __convert_chrom_id(self, tab):
-        with open(tab) as f:
+        with open(tab, encoding='utf-8') as f:
             tab = [i.strip().split()[:2] for i in f if not i.startswith('#')]
         return {i[0]: i[1] for i in tab}
 
@@ -1107,9 +1107,9 @@ if __name__ == '__main__':
 
     if OutSeq:
         genome = {i.name: i.seq for i in Fasta_Reader(Genome)}
-        fp = open(OutSeq, 'w')
+        fp = open(OutSeq, 'w', encoding='utf-8')
     if outputfile:
-        fo = open(outputfile, 'w')
+        fo = open(outputfile, 'w', encoding='utf-8')
     for iso in readfile(inputfile):
         if outfmt == 'gtf':
             iso.to_gtf(fo)
